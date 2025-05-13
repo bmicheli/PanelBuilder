@@ -492,5 +492,5 @@ def toggle_hrs(n_load, n_reset):
 	return dash.no_update, dash.no_update, dash.no_update
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8050))  # Render fournit PORT
-    app.run_server(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 8050))
+    app.run(host="0.0.0.0", port=port)
