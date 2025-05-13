@@ -1,4 +1,5 @@
 import dash
+import os
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Output, Input, State, dash_table, ALL
 import pandas as pd
@@ -490,5 +491,6 @@ def toggle_hrs(n_load, n_reset):
 		return {"display": "none"}, {"display": "none"}, {"display": "none"}
 	return dash.no_update, dash.no_update, dash.no_update
 
-if __name__ == "__main__":
-	app.run(debug=True)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8050))  # Render fournit PORT
+    app.run_server(host='0.0.0.0', port=port)
