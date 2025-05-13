@@ -1,0 +1,4 @@
+panel_id,panel_name,gene_symbol,confidence_level,mode_of_inheritance,penetrance
+INT001,My Internal Panel 1,GENE1,3,AUTO,Complete
+INT001,My Internal Panel 1,GENE2,2,AUTO,Incomplete
+INT002,My Internal Panel 2,GENE3,1,RECESS,Complete
