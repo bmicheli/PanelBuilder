@@ -24,14 +24,20 @@ internal_df = pd.read_csv("data/internal_panels.csv")
 internal_panels = internal_df[["panel_id", "panel_name"]].drop_duplicates()
 
 def panel_options(df):
-	return [{"label": f"{row['name']} (ID {row['id']})", "value": row["id"]} for _, row in df.iterrows()]
+	# Include version number in the label for PanelApp panels
+	options = []
+	for _, row in df.iterrows():
+		version_text = f" v{row['version']}" if 'version' in row and pd.notna(row['version']) else ""
+		label = f"{row['name']}{version_text} (ID {row['id']})"
+		options.append({"label": label, "value": row["id"]})
+	return options
 
 def internal_options(df):
+	# No version numbers for internal panels
 	return [{"label": f"{row['panel_name']} (ID {row['panel_id']})", "value": row["panel_id"]} for _, row in df.iterrows()]
 
 # Function to generate a pie chart for a single panel
-
-def generate_panel_pie_chart(panel_df, panel_name):
+def generate_panel_pie_chart(panel_df, panel_name, version=None):
     # Filter out confidence level 0 (manual genes) before generating the chart
     panel_df = panel_df[panel_df['confidence_level'] != 0]
     
@@ -49,6 +55,11 @@ def generate_panel_pie_chart(panel_df, panel_name):
            startangle=90, wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
     ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
     
+    # Create title with version number if available
+    title = f"Gene Distribution - {panel_name}"
+    if version:
+        title += f" (v{version})"
+    
     # Convert plot to base64 image
     buf = io.BytesIO()
     plt.tight_layout()
@@ -57,7 +68,7 @@ def generate_panel_pie_chart(panel_df, panel_name):
     data = base64.b64encode(buf.getbuffer()).decode("ascii")
     
     return html.Div([
-        html.H4(f"Gene Distribution - {panel_name}", className="text-center mb-3"),
+        html.H4(title, className="text-center mb-3"),
         html.Img(src=f"data:image/png;base64,{data}", 
                 style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
     ], style={"border": "1px solid #999", "padding": "15px", "borderRadius": "8px", 
@@ -233,6 +244,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	manual_genes_list = []
 	panel_dataframes = {}  # Store dataframes for each panel for the pie chart
 	panel_names = {}       # Store panel names for identification
+	panel_versions = {}    # Store panel versions for identification
 
 	if selected_uk_ids:
 		for pid in selected_uk_ids:
@@ -248,9 +260,15 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			gene_sets[f"UK_{pid}"] = set(df_filtered["gene_symbol"])
 			
 			panel_name = f"UK Panel {pid}"
-			if panel_info and 'name' in panel_info:
-				panel_name = panel_info['name']
+			panel_version = None
+			if panel_info:
+				if 'name' in panel_info:
+					panel_name = panel_info['name']
+				if 'version' in panel_info:
+					panel_version = panel_info['version']
+			
 			panel_names[f"UK_{pid}"] = panel_name
+			panel_versions[f"UK_{pid}"] = panel_version
 
 	if selected_au_ids:
 		for pid in selected_au_ids:
@@ -266,9 +284,15 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			gene_sets[f"AUS_{pid}"] = set(df_filtered["gene_symbol"])
 			
 			panel_name = f"AUS Panel {pid}"
-			if panel_info and 'name' in panel_info:
-				panel_name = panel_info['name']
+			panel_version = None
+			if panel_info:
+				if 'name' in panel_info:
+					panel_name = panel_info['name']
+				if 'version' in panel_info:
+					panel_version = panel_info['version']
+			
 			panel_names[f"AUS_{pid}"] = panel_name
+			panel_versions[f"AUS_{pid}"] = panel_version
 
 	if selected_internal_ids:
 		for pid in selected_internal_ids:
@@ -285,6 +309,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			
 			panel_name = next((row['panel_name'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), f"Internal Panel {pid}")
 			panel_names[f"INT-{pid}"] = panel_name
+			panel_versions[f"INT-{pid}"] = None  # No version for internal panels
 
 	# Properly handle manual genes
 	if manual_genes:
@@ -296,6 +321,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			gene_sets["Manual"] = set(manual_genes_list)
 			panel_dataframes["Manual"] = manual_df
 			panel_names["Manual"] = "Manual Gene List"
+			panel_versions["Manual"] = None
 
 	if not genes_combined:
 		return "No gene found.", "", "", "", {"display": "none"}, []
@@ -377,7 +403,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		try:
 			panel_df = panel_dataframes[single_panel_id]
 			panel_name = panel_names[single_panel_id]
-			pie_component = generate_panel_pie_chart(panel_df, panel_name)
+			panel_version = panel_versions[single_panel_id]
+			pie_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
 		except Exception as e:
 			pie_component = html.Div(f"Could not generate pie chart: {str(e)}", style={"textAlign": "center", "fontStyle": "italic", "color": "#666"})
 
