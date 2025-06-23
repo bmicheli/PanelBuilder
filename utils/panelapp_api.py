@@ -43,5 +43,14 @@ def fetch_panel_genes(base_url, panel_id):
         for g in genes
     ])
     
-    return df_genes, panel_data.get("name")
-
+    # Return panel data which includes name, version, and other metadata
+    panel_info = {
+        "name": panel_data.get("name"),
+        "version": panel_data.get("version"),
+        "id": panel_data.get("id"),
+        "status": panel_data.get("status"),
+        "disease_group": panel_data.get("disease_group"),
+        "disease_sub_group": panel_data.get("disease_sub_group")
+    }
+    
+    return df_genes, panel_info
