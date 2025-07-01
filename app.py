@@ -35,30 +35,30 @@ PANEL_PRESETS = {
     "epilepsy": {
         "name": "Epilepsy Panel Set",
         "icon": "mdi:brain",
-        "uk_panels": [402, 166], 
-        "au_panels": [137],
+        "uk_panels": [], 
+        "au_panels": [],
         "internal": [],
-        "conf": [3, 2],
+        "conf": [],
         "manual": [],
-        "hpo_terms": ["HP:0001250", "HP:0002197", "HP:0002353"] 
+        "hpo_terms": [] 
     },
     "cardiac": {
         "name": "Cardiac Conditions",
         "icon": "mdi:heart",
-        "uk_panels": [174, 217],
+        "uk_panels": [],
         "au_panels": [],
         "internal": [],
-        "conf": [3, 2],
+        "conf": [],
         "manual": [],
-        "hpo_terms": ["HP:0001627", "HP:0001631"]  
+        "hpo_terms": []  
     },
     "cancer_predisposition": {
         "name": "Cancer Predisposition",
         "icon": "mdi:dna",
-        "uk_panels": [245, 210],
-        "au_panels": [143],
+        "uk_panels": [],
+        "au_panels": [],
         "internal": [],
-        "conf": [3],
+        "conf": [],
         "manual": [],
         "hpo_terms": []
     },
