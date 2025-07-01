@@ -1,3 +1,7 @@
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
 import dash
 import os
 import dash_bootstrap_components as dbc
@@ -10,6 +14,12 @@ from matplotlib_venn import venn2, venn3
 import io
 import base64
 import json
+import requests
+import re
+import time
+from datetime import datetime
+import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 from utils.panelapp_api import (
 	fetch_panels,
 	fetch_panel_genes,
@@ -17,14 +27,151 @@ from utils.panelapp_api import (
 	PANELAPP_AU_BASE
 )
 
-panels_uk_df = fetch_panels(PANELAPP_UK_BASE)
-panels_au_df = fetch_panels(PANELAPP_AU_BASE)
+# =============================================================================
+# PANEL PRESETS CONFIGURATION
+# =============================================================================
 
-internal_df = pd.read_csv("data/internal_panels.csv")
-internal_panels = internal_df[["panel_id", "panel_name"]].drop_duplicates()
+PANEL_PRESETS = {
+    "epilepsy": {
+        "name": "Epilepsy Panel Set",
+        "icon": "mdi:brain",
+        "uk_panels": [402, 166], 
+        "au_panels": [137],
+        "internal": [],
+        "conf": [3, 2],
+        "manual": [],
+        "hpo_terms": ["HP:0001250", "HP:0002197", "HP:0002353"] 
+    },
+    "cardiac": {
+        "name": "Cardiac Conditions",
+        "icon": "mdi:heart",
+        "uk_panels": [174, 217],
+        "au_panels": [],
+        "internal": [],
+        "conf": [3, 2],
+        "manual": [],
+        "hpo_terms": ["HP:0001627", "HP:0001631"]  
+    },
+    "cancer_predisposition": {
+        "name": "Cancer Predisposition",
+        "icon": "mdi:dna",
+        "uk_panels": [245, 210],
+        "au_panels": [143],
+        "internal": [],
+        "conf": [3],
+        "manual": [],
+        "hpo_terms": []
+    },
+    "neurodevelopmental": {
+        "name": "Neurodevelopmental Disorders",
+        "icon": "mdi:head-cog",
+        "uk_panels": [285],
+        "au_panels": [250],
+        "internal": [],
+        "conf": [3],
+        "manual": [],
+        "hpo_terms": ["HP:0012758", "HP:0001249"] 
+    }
+}
+
+# =============================================================================
+# UTILITY FUNCTIONS - HPO MANAGEMENT
+# =============================================================================
+
+def fetch_panel_disorders(base_url, panel_id):
+	try:
+		base_url = base_url.rstrip('/')
+		url = f"{base_url}/panels/{panel_id}/"
+		response = requests.get(url, timeout=10)
+		response.raise_for_status()
+		data = response.json()
+		
+		relevant_disorders = data.get('relevant_disorders', [])
+		
+		if not relevant_disorders:
+			return []
+		
+		hpo_terms = []
+		
+		for disorder in relevant_disorders:
+			if isinstance(disorder, str):
+				hpo_matches = re.findall(r'HP:\d{7}', disorder)
+				hpo_terms.extend(hpo_matches)
+		
+		hpo_terms = list(dict.fromkeys(hpo_terms))
+		
+		return hpo_terms
+		
+	except requests.exceptions.HTTPError as e:
+		if e.response.status_code == 404:
+			print(f"Panel {panel_id} non trouvé (404) - URL: {url}")
+		else:
+			print(f"Erreur HTTP {e.response.status_code} pour le panel {panel_id}: {e}")
+		return []
+	except Exception as e:
+		print(f"Erreur lors de la récupération des disorders pour le panel {panel_id}: {e}")
+		return []
+
+def get_hpo_terms_from_panels(uk_ids=None, au_ids=None):
+	all_hpo_terms = set() 
+	if au_ids:
+		for panel_id in au_ids:
+			hpo_terms = fetch_panel_disorders(PANELAPP_AU_BASE, panel_id)
+			all_hpo_terms.update(hpo_terms)
+	
+	return list(all_hpo_terms)
+
+def search_hpo_terms(query, limit=100):
+	if not query or len(query.strip()) < 2:
+		return []
+	
+	try:
+		url = f"https://ontology.jax.org/api/hp/search?q={query}&page=0&limit={limit}"
+		response = requests.get(url, timeout=5)
+		response.raise_for_status()
+		data = response.json()
+		
+		options = []
+		if 'terms' in data:
+			for term in data['terms']:
+				label = f"{term.get('name', '')} ({term.get('id', '')})"
+				value = term.get('id', '')
+				options.append({"label": label, "value": value})
+		
+		return options
+	except Exception as e:
+		print(f"Error searching HPO terms: {e}")
+		return []
+
+def fetch_hpo_term_details(term_id):
+	try:
+		url = f"https://ontology.jax.org/api/hp/terms/{term_id}"
+		response = requests.get(url, timeout=5)
+		if response.status_code == 200:
+			term_data = response.json()
+			return {
+				"id": term_id,
+				"name": term_data.get("name", term_id),
+				"definition": term_data.get("definition", "No definition available")
+			}
+		else:
+			return {
+				"id": term_id,
+				"name": term_id,
+				"definition": "Unable to fetch definition"
+			}
+	except Exception as e:
+		return {
+			"id": term_id,
+			"name": term_id,
+			"definition": "Unable to fetch definition"
+		}
+
+# =============================================================================
+# UTILITY FUNCTIONS - PANEL OPTIONS
+# =============================================================================
 
 def panel_options(df):
-	# Include version number in the label for PanelApp panels
 	options = []
 	for _, row in df.iterrows():
 		version_text = f" v{row['version']}" if 'version' in row and pd.notna(row['version']) else ""
@@ -33,29 +180,28 @@ def panel_options(df):
 	return options
 
 def internal_options(df):
-	# No version numbers for internal panels
 	return [{"label": f"{row['panel_name']} (ID {row['panel_id']})", "value": row["panel_id"]} for _, row in df.iterrows()]
 
-# Function to generate a pie chart for a single panel
+# =============================================================================
+# UTILITY FUNCTIONS - CHART GENERATION
+# =============================================================================
+
 def generate_panel_pie_chart(panel_df, panel_name, version=None):
-    # Filter out confidence level 0 (manual genes) before generating the chart
     panel_df = panel_df[panel_df['confidence_level'] != 0]
     
     conf_counts = panel_df.groupby('confidence_level').size().reset_index(name='count')
     conf_counts = conf_counts.sort_values('confidence_level', ascending=False)
     
-    # Use only colors for levels 1-3 (remove the blue for level 0)
     colors = ['#d4edda', '#fff3cd', '#f8d7da']  # Green, Yellow, Red for 3,2,1
     
     labels = [f"Confidence {level} ({count})" for level, count in 
               zip(conf_counts['confidence_level'], conf_counts['count'])]
     
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(9, 5))  
     ax.pie(conf_counts['count'], labels=labels, colors=colors, autopct='%1.1f%%', 
            startangle=90, wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
-    ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
-    
-    # Create title with version number if available
+    ax.axis('equal') 
+
     title = f"Gene Distribution - {panel_name}"
     if version:
         title += f" (v{version})"
@@ -63,21 +209,178 @@ def generate_panel_pie_chart(panel_df, panel_name, version=None):
     # Convert plot to base64 image
     buf = io.BytesIO()
     plt.tight_layout()
-    plt.savefig(buf, format="png")
+    plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
     plt.close(fig)
     data = base64.b64encode(buf.getbuffer()).decode("ascii")
     
     return html.Div([
-        html.H4(title, className="text-center mb-3"),
+        html.H4(title, className="text-center mb-3", style={"fontSize": "16px"}),
         html.Img(src=f"data:image/png;base64,{data}", 
                 style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
-    ], style={"border": "1px solid #999", "padding": "15px", "borderRadius": "8px", 
-             "maxWidth": "650px", "margin": "0 auto"})
+    ], style={
+        "border": "1px solid #999", 
+        "padding": "10px", 
+        "borderRadius": "8px", 
+        "maxWidth": "100%", 
+        "margin": "0",
+        "height": "580px",  
+        "display": "flex",
+        "flexDirection": "column",
+        "justifyContent": "center"
+    })
+
+def create_hpo_terms_table(hpo_details):
+	if not hpo_details:
+		return html.Div()
+	
+	table_data = []
+	for term in hpo_details:
+		table_data.append({
+			"HPO ID": term["id"],
+			"Term Name": term["name"],
+			"Definition": term["definition"][:80] + "..." if len(term["definition"]) > 80 else term["definition"]
+		})
+	
+	return html.Div([
+		html.H5(f"Selected HPO Terms ({len(hpo_details)})", className="mb-3", style={"textAlign": "center", "fontSize": "16px"}),
+		dash_table.DataTable(
+			columns=[
+				{"name": "HPO ID", "id": "HPO ID"},
+				{"name": "Term Name", "id": "Term Name"},
+				{"name": "Definition", "id": "Definition"}
+			],
+			data=table_data,
+			style_table={
+				"overflowX": "auto",
+				"height": "520px",  
+				"overflowY": "auto",
+				"border": "1px solid #ddd",
+				"borderRadius": "8px",
+				"width": "100%"
+			},
+			style_cell={
+				"textAlign": "left",
+				"padding": "8px",
+				"fontFamily": "Arial, sans-serif",
+				"fontSize": "11px",
+				"whiteSpace": "normal",
+				"height": "auto",
+				"minWidth": "60px",
+				"maxWidth": "120px"
+			},
+			style_header={
+				"fontWeight": "bold",
+				"backgroundColor": "#f8f9fa",
+				"border": "1px solid #ddd",
+				"fontSize": "12px"
+			},
+			style_data={
+				"backgroundColor": "#ffffff",
+				"border": "1px solid #eee"
+			},
+			style_data_conditional=[
+				{
+					"if": {"row_index": "odd"},
+					"backgroundColor": "#f8f9fa"
+				}
+			],
+			page_action="native",  
+			page_size=50,  
+			virtualization=False,  
+			tooltip_data=[
+				{
+					"Definition": {"value": term["definition"], "type": "text"}
+					for column in ["HPO ID", "Term Name", "Definition"]
+				} for term in hpo_details
+			],
+			tooltip_duration=None
+		)
+	], style={
+		"border": "1px solid #999", 
+		"padding": "10px", 
+		"borderRadius": "8px",
+		"backgroundColor": "#f8f9fa",
+		"width": "100%",
+		"height": "100%",  
+		"display": "flex",
+		"flexDirection": "column"
+	})
+
+# =============================================================================
+# SIDEBAR COMPONENT
+# =============================================================================
+
+def create_sidebar():
+    return dbc.Offcanvas(
+        id="sidebar-offcanvas",
+        title="Quick Panel Presets",
+        is_open=False,
+        placement="start",
+        backdrop=False,
+        style={"width": "350px"},
+        children=[
+            # Quick Presets Section
+            html.Div([
+                #html.H5("Quick Presets", className="mb-3"),
+                html.Div(id="preset-buttons", children=[
+                    dbc.Button(
+                        [
+                            DashIconify(icon=preset["icon"], width=20, className="me-2"),
+                            preset["name"]
+                        ],
+                        id={"type": "preset-btn", "index": key},
+                        color="light",
+                        className="mb-2 w-100 text-start",
+                        n_clicks=0
+                    )
+                    for key, preset in PANEL_PRESETS.items()
+                ])
+            ], className="mb-4")
+        ]
+    )
+
+# =============================================================================
+# DATA INITIALIZATION
+# =============================================================================
+
+panels_uk_df = fetch_panels(PANELAPP_UK_BASE)
+panels_au_df = fetch_panels(PANELAPP_AU_BASE)
+
+internal_df = pd.read_csv("data/internal_panels.csv")
+internal_panels = internal_df[["panel_id", "panel_name"]].drop_duplicates()
+
+# =============================================================================
+# DASH APP INITIALIZATION
+# =============================================================================
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
+# =============================================================================
+# DASH APP INITIALIZATION
+# =============================================================================
+
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+
+# =============================================================================
+# APP LAYOUT
+# =============================================================================
+
 app.layout = dbc.Container([
-	html.H1("🧬Panel Builder"),
+	# Sidebar
+	create_sidebar(),
+	
+	# Header with menu button
+	html.Div([
+		dbc.Button(
+			[DashIconify(icon="mdi:menu", width=24)],
+			id="sidebar-toggle",
+			color="primary",
+			className="me-2",
+			style={"position": "absolute", "top": "20px", "right": "20px"}
+		),
+		html.H1("🧬Panel Builder"),
+	], style={"position": "relative"}),
+	
 	html.Div(html.Hr(), id="hr-hidden", style={"display": "none"}),
 	dbc.Row([
 		dbc.Col([html.Label("PanelApp UK"), dcc.Dropdown(id="dropdown-uk", options=panel_options(panels_uk_df), placeholder="Select a UK panel", multi=True)]),
@@ -85,30 +388,85 @@ app.layout = dbc.Container([
 		dbc.Col([html.Label("Internal Panel"), dcc.Dropdown(id="dropdown-internal", options=internal_options(internal_panels), placeholder="Select an internal panel", multi=True)])
 	]),
 	dbc.Row([
-		dbc.Col([html.Label("Add custom gene(s) manually:"), dcc.Textarea(id="manual-genes", placeholder="Enter gene symbols, one per line", style={"width": "100%", "height": "100px"})]),
+		dbc.Col([
+			html.Label("Add gene(s) manually:"), 
+			dcc.Textarea(id="manual-genes", placeholder="Enter gene symbols, one per line", style={"width": "100%", "height": "100px"})
+		]),
 		dbc.Col([html.Label("Filter Genes by confidence level:"), dcc.Checklist(id="confidence-filter", options=[{"label": " Green (3)", "value": 3}, {"label": " Amber (2)", "value": 2}, {"label": " Red (1)", "value": 1}], value=[3, 2], inline=False)]),
 		dbc.Col([
-			html.Label("Import code:"),
-			dcc.Textarea(id="panel-code-input", placeholder="Paste a previously generated code here...", style={"width": "100%", "height": "60px"}),
-			html.Div(dbc.Button("Import Previous Panel", id="import-panel-btn", color="info", className="mt-2"), className="d-flex justify-content-center")
+			html.Label("Search HPO terms:"),
+			dcc.Dropdown(
+				id="hpo-search-dropdown",
+				placeholder="Type to search HPO terms",
+				multi=True,
+				searchable=True,
+				options=[],
+				style={"width": "100%", "marginBottom": "5px"}
+			),
+			html.Small("ℹ️ HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
+			          className="text-muted", style={"fontSize": "11px"})
 		])
 	]),
 	html.Hr(),
+	
 	dbc.Row(
 		dbc.Col(html.Div([
 			dbc.Button("Reset", id="reset-btn", color="danger", className="me-2"),
-			dbc.Button("Build Panel", id="load-genes-btn", color="primary")
+			dbc.Button("Build Panel", id="load-genes-btn", color="primary", className="me-2"),
+			dbc.Button("Import Panel", id="show-import-btn", color="info")
 		], className="d-flex justify-content-center"), width=12),
 		className="mb-3"
 	),
+	
+	html.Div(
+		id="import-section",
+		style={"display": "none"},
+		children=[
+			dbc.Row([
+				dbc.Col([
+					html.Label("Import code:", style={"marginBottom": "10px"}),
+					dcc.Textarea(
+						id="panel-code-input", 
+						placeholder="Paste a previously generated code here...", 
+						style={"width": "100%", "height": "80px", "marginBottom": "10px"}
+					),
+					html.Div([
+						dbc.Button("Import", id="import-panel-btn", color="success", className="me-2"),
+						dbc.Button("Cancel", id="cancel-import-btn", color="secondary")
+					], className="d-flex justify-content-center")
+				], width={"size": 6, "offset": 3})
+			])
+		]
+	),
 	html.Div(html.Hr(), id="hr-venn", style={"display": "none"}),
 
-	# Loading wrapper
 	dcc.Loading(
 		children=[
-			# Added pie chart container here
 			html.Div(id="pie-chart-container", style={"marginBottom": "20px", "display": "none"}),
-			html.Div(id="venn-container", style={"marginBottom": "20px"}),
+			html.Div([
+				dbc.Row([
+					dbc.Col(
+						html.Div(id="venn-container"), 
+						width=7, 
+						style={
+							"paddingRight": "15px", 
+							"display": "flex", 
+							"flexDirection": "column",
+							"height": "600px"  
+						}
+					),
+					dbc.Col(
+						html.Div(id="hpo-terms-table-container"), 
+						width=5, 
+						style={
+							"paddingLeft": "5px",
+							"display": "flex", 
+							"flexDirection": "column",
+							"height": "600px"  
+						}
+					)
+				], className="no-gutters", style={"display": "flex", "flexWrap": "nowrap"})
+			], id="venn-hpo-row", style={"marginBottom": "20px", "display": "none"}),
 			html.Div(html.Hr(), id="hr-summary", style={"display": "none"}),
 			html.Div(id="summary-table-output"),
 			html.Div(html.Hr(), id="hr-table", style={"display": "none"}),
@@ -125,12 +483,118 @@ app.layout = dbc.Container([
 		id="generate-code-section",
 		style={"display": "none", "width": "100%"},
 		children=[
-			html.Div(dbc.Button("Generate Unique Code", id="generate-code-btn", color="primary"), style={"textAlign": "center", "marginBottom": "10px"}),
-			html.Div(dcc.Textarea(id="generated-code-output", style={"width": "80%", "maxWidth": "900px", "height": "60px", "margin": "0 auto", "display": "block"}, readOnly=True), id="generated-code-container-text")
+			html.Div(dbc.Button("Generate Unique Code", id="generate-code-btn", color="primary"), 
+			        style={"textAlign": "center", "marginBottom": "10px"}),
+			html.Div([
+				dcc.Textarea(id="generated-code-output", 
+				            style={"width": "80%", "maxWidth": "900px", "height": "60px", 
+				                   "margin": "0 auto", "display": "block"}, readOnly=True),
+				html.Div(id="copy-notification", 
+				        style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
+			], id="generated-code-container-text")
 		]
 	),
 	html.Hr(),
 ], fluid=True)
+
+# =============================================================================
+# CALLBACKS - HPO MANAGEMENT
+# =============================================================================
+
+@app.callback(
+	Output("hpo-search-dropdown", "value", allow_duplicate=True),
+	Output("hpo-search-dropdown", "options", allow_duplicate=True),
+	Input("dropdown-au", "value"),  
+	State("hpo-search-dropdown", "value"),
+	State("hpo-search-dropdown", "options"),
+	prevent_initial_call=True
+)
+def auto_generate_hpo_from_panels_preview(au_ids, current_hpo_values, current_hpo_options):
+	if not au_ids:
+		return current_hpo_values or [], current_hpo_options or []
+	
+	panel_hpo_terms = get_hpo_terms_from_panels(uk_ids=None, au_ids=au_ids)
+	
+	if not panel_hpo_terms:
+		return current_hpo_values or [], current_hpo_options or []
+	
+	new_hpo_options = []
+	new_hpo_values = []
+	
+	for hpo_id in panel_hpo_terms:
+		hpo_details = fetch_hpo_term_details(hpo_id)
+		
+		option = {
+			"label": f"{hpo_details['name']} ({hpo_id})",
+			"value": hpo_id
+		}
+		new_hpo_options.append(option)
+		new_hpo_values.append(hpo_id)
+	
+	current_values = current_hpo_values or []
+	current_options = current_hpo_options or []
+	
+	all_values = list(set(current_values + new_hpo_values))
+	
+	existing_option_values = [opt["value"] for opt in current_options]
+	all_options = current_options.copy()
+	
+	for option in new_hpo_options:
+		if option["value"] not in existing_option_values:
+			all_options.append(option)
+	
+	return all_values, all_options
+
+@app.callback(
+	Output("hpo-search-dropdown", "options", allow_duplicate=True),
+	Input("hpo-search-dropdown", "search_value"),
+	State("hpo-search-dropdown", "value"),
+	State("hpo-search-dropdown", "options"),
+	prevent_initial_call=True
+)
+def update_hpo_options(search_value, current_values, current_options):
+	selected_options = []
+	if current_values and current_options:
+		selected_options = [opt for opt in current_options if opt["value"] in current_values]
+	
+	new_options = []
+	if search_value and len(search_value.strip()) >= 2:
+		new_options = search_hpo_terms(search_value)
+	
+	all_options = selected_options.copy()
+	
+	existing_values = [opt["value"] for opt in selected_options]
+	for opt in new_options:
+		if opt["value"] not in existing_values:
+			all_options.append(opt)
+	
+	return all_options
+
+# =============================================================================
+# CALLBACKS - UI MANAGEMENT
+# =============================================================================
+
+@app.callback(
+	Output("import-section", "style"),
+	Input("show-import-btn", "n_clicks"),
+	Input("cancel-import-btn", "n_clicks"),
+	Input("import-panel-btn", "n_clicks"),
+	Input("reset-btn", "n_clicks"),
+	prevent_initial_call=True
+)
+def toggle_import_section(n_show, n_cancel, n_import, n_reset):
+	ctx = dash.callback_context
+	if not ctx.triggered:
+		raise dash.exceptions.PreventUpdate
+	
+	triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+	
+	if triggered_id == "show-import-btn":
+		return {"display": "block", "marginBottom": "20px", "padding": "15px", "backgroundColor": "#f8f9fa", "borderRadius": "8px"}
+	elif triggered_id in ["cancel-import-btn", "import-panel-btn", "reset-btn"]:
+		return {"display": "none"}
+	
+	return dash.no_update
 
 @app.callback(
 	Output("generate-code-section", "style"),
@@ -151,6 +615,94 @@ def toggle_code_visibility(n_build, n_reset):
     return dash.no_update
 
 @app.callback(
+	Output("hr-venn", "style"),
+	Output("hr-summary", "style"),
+	Output("hr-table", "style"),
+	Input("load-genes-btn", "n_clicks"),
+	Input("reset-btn", "n_clicks"),
+	prevent_initial_call=True
+)
+def toggle_hrs(n_load, n_reset):
+	ctx = dash.callback_context
+	if not ctx.triggered:
+		raise dash.exceptions.PreventUpdate
+	triggered = ctx.triggered[0]["prop_id"].split(".")[0]
+	if triggered == "load-genes-btn":
+		return {"display": "block"}, {"display": "block"}, {"display": "block"}
+	elif triggered == "reset-btn":
+		return {"display": "none"}, {"display": "none"}, {"display": "none"}
+	return dash.no_update, dash.no_update, dash.no_update
+
+# =============================================================================
+# CALLBACKS - NEW FEATURES (SIDEBAR)
+# =============================================================================
+
+# Toggle sidebar
+@app.callback(
+    Output("sidebar-offcanvas", "is_open"),
+    Input("sidebar-toggle", "n_clicks"),
+    State("sidebar-offcanvas", "is_open"),
+    prevent_initial_call=True
+)
+def toggle_sidebar(n_clicks, is_open):
+    if n_clicks:
+        return not is_open
+    return is_open
+
+# Handle preset selection
+@app.callback(
+    Output("dropdown-uk", "value", allow_duplicate=True),
+    Output("dropdown-au", "value", allow_duplicate=True),
+    Output("dropdown-internal", "value", allow_duplicate=True),
+    Output("confidence-filter", "value", allow_duplicate=True),
+    Output("manual-genes", "value", allow_duplicate=True),
+    Output("hpo-search-dropdown", "value", allow_duplicate=True),
+    Output("hpo-search-dropdown", "options", allow_duplicate=True),  # Added this
+    Output("sidebar-offcanvas", "is_open", allow_duplicate=True),
+    Input({"type": "preset-btn", "index": ALL}, "n_clicks"),
+    State("hpo-search-dropdown", "options"),  # Added this
+    prevent_initial_call=True
+)
+def apply_preset(n_clicks_list, current_hpo_options):
+    ctx = dash.callback_context
+    if not ctx.triggered or all(n == 0 for n in n_clicks_list):
+        raise dash.exceptions.PreventUpdate
+    
+    # Find which preset was clicked
+    prop_id = ctx.triggered[0]["prop_id"]
+    preset_key = json.loads(prop_id.split(".")[0])["index"]
+    preset = PANEL_PRESETS[preset_key]
+    
+    # Get all values from preset with defaults
+    uk_panels = preset.get("uk_panels", [])
+    au_panels = preset.get("au_panels", [])
+    internal_panels = preset.get("internal", [])
+    conf_levels = preset.get("conf", [3, 2])  # Default to Green and Amber
+    manual_genes_list = preset.get("manual", [])
+    manual_genes_text = "\n".join(manual_genes_list) if manual_genes_list else ""
+    hpo_terms = preset.get("hpo_terms", [])
+    
+    # Create HPO options for the preset terms
+    updated_hpo_options = current_hpo_options or []
+    existing_option_values = [opt["value"] for opt in updated_hpo_options]
+    
+    for hpo_id in hpo_terms:
+        if hpo_id not in existing_option_values:
+            hpo_details = fetch_hpo_term_details(hpo_id)
+            option = {
+                "label": f"{hpo_details['name']} ({hpo_id})",
+                "value": hpo_id
+            }
+            updated_hpo_options.append(option)
+    
+    # Return all values AND close sidebar (False)
+    return uk_panels, au_panels, internal_panels, conf_levels, manual_genes_text, hpo_terms, updated_hpo_options, False
+
+# =============================================================================
+# CALLBACKS - CODE GENERATION
+# =============================================================================
+
+@app.callback(
 	Output("generated-code-output", "value", allow_duplicate=True),
 	Input("generate-code-btn", "n_clicks"),
 	State("dropdown-uk", "value"),
@@ -158,19 +710,25 @@ def toggle_code_visibility(n_build, n_reset):
 	State("dropdown-internal", "value"),
 	State("confidence-filter", "value"),
 	State("manual-genes", "value"),
+	State("hpo-search-dropdown", "value"),  
 	prevent_initial_call=True
 )
-def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual):
+def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual, hpo_terms):
 	manual_list = [g.strip() for g in manual.strip().splitlines() if g.strip()] if manual else []
 	config = {
 		"uk": uk_ids or [],
 		"au": au_ids or [],
 		"internal": internal_ids or [],
 		"conf": confs or [],
-		"manual": manual_list
+		"manual": manual_list,
+		"hpo_terms": hpo_terms or []  
 	}
 	encoded = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
 	return encoded
+
+# =============================================================================
+# CALLBACKS - RESET AND IMPORT
+# =============================================================================
 
 @app.callback(
 	Output("dropdown-uk", "value"),
@@ -178,12 +736,16 @@ def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual):
 	Output("dropdown-internal", "value"),
 	Output("confidence-filter", "value"),
 	Output("manual-genes", "value"),
+	Output("hpo-search-dropdown", "value"),  
+	Output("hpo-search-dropdown", "options"), 
 	Output("panel-code-input", "value"),
 	Output("summary-table-output", "children"),
 	Output("gene-table-output", "children"),
 	Output("venn-container", "children"),
-	Output("pie-chart-container", "children"),  # Added pie chart output
-	Output("pie-chart-container", "style"),     # Added pie chart style output
+	Output("hpo-terms-table-container", "children"),
+	Output("venn-hpo-row", "style"), 
+	Output("pie-chart-container", "children"), 
+	Output("pie-chart-container", "style"),     
 	Output("gene-list-store", "data"),
 	Output("generated-code-output", "value"),
 	Input("reset-btn", "n_clicks"),
@@ -199,62 +761,86 @@ def handle_reset_or_import(n_reset, n_import, code):
 	triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
 	if triggered_id == "reset-btn":
-		return None, None, None, [3, 2], "", "", "", "", "", "", {"display": "none"}, [], ""
+		return None, None, None, [3, 2], "", [], [], "", "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], ""
 
 	if triggered_id == "import-panel-btn" and code:
 		try:
 			decoded = base64.urlsafe_b64decode(code).decode()
 			config = json.loads(decoded)
+			
+			hpo_terms = config.get("hpo_terms", [])
+			hpo_options = []
+			for hpo_id in hpo_terms:
+				hpo_details = fetch_hpo_term_details(hpo_id)
+				option = {
+					"label": f"{hpo_details['name']} ({hpo_id})",
+					"value": hpo_id
+				}
+				hpo_options.append(option)
+			
 			return (
 				config.get("uk", []),
 				config.get("au", []),
 				config.get("internal", []),
 				config.get("conf", []),
 				"\n".join(config.get("manual", [])),
+				hpo_terms,  
+				hpo_options, 
 				code,
-				"", "", "", "", {"display": "none"}, [], ""
+				"", "", "", "", {"display": "none"}, "", {"display": "none"}, [], ""
 			)
 		except Exception:
-			return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+			return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 	raise dash.exceptions.PreventUpdate
 
-# Merged the two duplicate display_panel_genes functions into one
+# =============================================================================
+# CALLBACKS - MAIN PANEL PROCESSING
+# =============================================================================
+
 @app.callback(
 	Output("summary-table-output", "children", allow_duplicate=True),
 	Output("gene-table-output", "children", allow_duplicate=True),
 	Output("venn-container", "children", allow_duplicate=True),
-	Output("pie-chart-container", "children", allow_duplicate=True),  # Added pie chart output
-	Output("pie-chart-container", "style", allow_duplicate=True),     # Added pie chart style output
+	Output("hpo-terms-table-container", "children", allow_duplicate=True),  
+	Output("venn-hpo-row", "style", allow_duplicate=True),  
+	Output("pie-chart-container", "children", allow_duplicate=True), 
+	Output("pie-chart-container", "style", allow_duplicate=True),   
 	Output("gene-list-store", "data", allow_duplicate=True),
+	Output("hpo-search-dropdown", "value", allow_duplicate=True),  
+	Output("hpo-search-dropdown", "options", allow_duplicate=True), 
 	Input("load-genes-btn", "n_clicks"),
 	State("dropdown-uk", "value"),
 	State("dropdown-au", "value"),
 	State("dropdown-internal", "value"),
 	State("confidence-filter", "value"),
 	State("manual-genes", "value"),
+	State("hpo-search-dropdown", "value"),  
+	State("hpo-search-dropdown", "options"), 
 	prevent_initial_call=True
 )
-def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_internal_ids, selected_confidences, manual_genes):
+def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_internal_ids, selected_confidences, manual_genes, selected_hpo_terms, current_hpo_options):
 	if not n_clicks:
-		return "", "", "", "", {"display": "none"}, []
+		return "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], [], []
+
+	# Use only the selected HPO terms, don't auto-add more
+	all_hpo_terms = selected_hpo_terms or []
+	updated_hpo_options = current_hpo_options or []
 
 	genes_combined = []
 	gene_sets = {}
 	manual_genes_list = []
-	panel_dataframes = {}  # Store dataframes for each panel for the pie chart
-	panel_names = {}       # Store panel names for identification
-	panel_versions = {}    # Store panel versions for identification
+	panel_dataframes = {} 
+	panel_names = {}      
+	panel_versions = {}    
 
 	if selected_uk_ids:
 		for pid in selected_uk_ids:
 			df, panel_info = fetch_panel_genes(PANELAPP_UK_BASE, pid)
 			df["confidence_level"] = df["confidence_level"].astype(int)
 			
-			# Store complete dataframe for pie chart (all confidence levels)
 			panel_dataframes[f"UK_{pid}"] = df.copy()
 			
-			# Filter for combined gene list based on selected confidence levels
 			df_filtered = df[df["confidence_level"].isin(selected_confidences)]
 			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
 			gene_sets[f"UK_{pid}"] = set(df_filtered["gene_symbol"])
@@ -275,10 +861,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			df, panel_info = fetch_panel_genes(PANELAPP_AU_BASE, pid)
 			df["confidence_level"] = df["confidence_level"].astype(int)
 			
-			# Store complete dataframe for pie chart (all confidence levels)
 			panel_dataframes[f"AUS_{pid}"] = df.copy()
 			
-			# Filter for combined gene list based on selected confidence levels
 			df_filtered = df[df["confidence_level"].isin(selected_confidences)]
 			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
 			gene_sets[f"AUS_{pid}"] = set(df_filtered["gene_symbol"])
@@ -299,23 +883,19 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			panel_df = internal_df[internal_df["panel_id"] == pid]
 			panel_df["confidence_level"] = panel_df["confidence_level"].astype(int)
 			
-			# Store complete dataframe for pie chart (all confidence levels)
 			panel_dataframes[f"INT-{pid}"] = panel_df.copy()
 			
-			# Filter for combined gene list based on selected confidence levels
 			panel_df_filtered = panel_df[panel_df["confidence_level"].isin(selected_confidences)].copy()
 			genes_combined.append(panel_df_filtered[["gene_symbol", "confidence_level"]])
 			gene_sets[f"INT-{pid}"] = set(panel_df_filtered["gene_symbol"])
 			
 			panel_name = next((row['panel_name'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), f"Internal Panel {pid}")
 			panel_names[f"INT-{pid}"] = panel_name
-			panel_versions[f"INT-{pid}"] = None  # No version for internal panels
+			panel_versions[f"INT-{pid}"] = None 
 
-	# Properly handle manual genes
 	if manual_genes:
-		# Strip and filter empty lines
 		manual_genes_list = [g.strip() for g in manual_genes.strip().splitlines() if g.strip()]
-		if manual_genes_list:  # Only add if there are actual gene symbols
+		if manual_genes_list:  
 			manual_df = pd.DataFrame({"gene_symbol": manual_genes_list, "confidence_level": [0] * len(manual_genes_list)})
 			genes_combined.append(manual_df)
 			gene_sets["Manual"] = set(manual_genes_list)
@@ -324,7 +904,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			panel_versions["Manual"] = None
 
 	if not genes_combined:
-		return "No gene found.", "", "", "", {"display": "none"}, []
+		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options
 
 	df_all = pd.concat(genes_combined)
 	df_all["confidence_level"] = df_all["confidence_level"].astype(int)
@@ -341,75 +921,111 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in ["Confidence level", "Number of genes"]], data=summary.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"width": "100%"}), width=8)
 	])
 
-	# Decide whether to show Venn diagram or pie chart based on number of panels
 	show_venn = True
 	show_pie = False
 	single_panel_id = None
 	venn_component = html.Div()
 	pie_component = html.Div()
 
-	# Count active panels (excluding Manual)
 	active_panels = len([k for k in gene_sets.keys() if k != "Manual"])
 
-	# New improved logic:
 	if active_panels == 0 and "Manual" in gene_sets and len(manual_genes_list) > 0:
-		# Only manual genes (and they actually exist)
 		show_venn = False
 		show_pie = True
 		single_panel_id = "Manual"
 	elif active_panels == 1 and "Manual" not in gene_sets:
-		# Only one panel, no manual genes
 		show_venn = False
 		show_pie = True
-		# Get the single non-manual panel
 		single_panel_id = next((k for k in gene_sets.keys() if k != "Manual"), None)
 	elif active_panels == 1 and "Manual" in gene_sets:
-		# One panel + manual genes - show Venn diagram
 		show_venn = True
 		show_pie = False
 	elif active_panels >= 2:
-		# Multiple panels - show Venn diagram
 		show_venn = True
 		show_pie = False
 
-	# Generate Venn diagram if needed
 	if show_venn:
 		valid_sets = [s for s in gene_sets.values() if len(s) > 0]
 		if 2 <= len(valid_sets) <= 3:
 			set_items = list(gene_sets.items())[:3]
 			labels = [s[0] for s in set_items]
 			sets = [s[1] for s in set_items]
-			fig, ax = plt.subplots(figsize=(8, 8))
+			fig, ax = plt.subplots(figsize=(9, 5))  
 			try:
 				if len(sets) == 2:
-					venn2(sets, set_labels=labels)#,set_colors = ('#1f77b4', '#2ca02c'))
+					venn2(sets, set_labels=labels)
 				elif len(sets) == 3:
-					venn3(sets, set_labels=labels)#,set_colors = ('#1f77b4', '#2ca02c', '#9467bd'))
+					venn3(sets, set_labels=labels)
 				buf = io.BytesIO()
 				plt.tight_layout()
-				plt.savefig(buf, format="png")
+				plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
 				plt.close(fig)
 				data = base64.b64encode(buf.getbuffer()).decode("ascii")
 				venn_component = html.Div([
 					html.Img(src=f"data:image/png;base64,{data}", style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
-				], style={"border": "1px solid #999", "padding": "5px", "borderRadius": "8px", "maxWidth": "650px", "margin": "0 auto"})
+				], style={
+					"border": "1px solid #999", 
+					"padding": "10px", 
+					"borderRadius": "8px", 
+					"maxWidth": "100%", 
+					"margin": "0",
+					"height": "580px",  
+					"display": "flex",
+					"alignItems": "center",
+					"justifyContent": "center"
+				})
 			except Exception as e:
-				venn_component = html.Div("Could not generate Venn diagram.", style={"textAlign": "center", "fontStyle": "italic", "color": "#666"})
+				venn_component = html.Div("Could not generate Venn diagram.", style={
+					"textAlign": "center", 
+					"fontStyle": "italic", 
+					"color": "#666",
+					"height": "580px",
+					"display": "flex",
+					"alignItems": "center",
+					"justifyContent": "center"
+				})
 		else:
-			venn_component = html.Div("Venn diagram not available for fewer than 2 or more than 3 groups.", style={"textAlign": "center", "fontStyle": "italic", "color": "#666"})
+			venn_component = html.Div("Venn diagram not available for fewer than 2 or more than 3 groups.", style={
+				"textAlign": "center", 
+				"fontStyle": "italic", 
+				"color": "#666",
+				"height": "580px",
+				"display": "flex",
+				"alignItems": "center",
+				"justifyContent": "center"
+			})
 	
-	# Generate pie chart if needed 
 	if show_pie and single_panel_id:
 		try:
 			panel_df = panel_dataframes[single_panel_id]
 			panel_name = panel_names[single_panel_id]
 			panel_version = panel_versions[single_panel_id]
 			pie_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
+			venn_component = pie_component
+			pie_component = html.Div()  
 		except Exception as e:
-			pie_component = html.Div(f"Could not generate pie chart: {str(e)}", style={"textAlign": "center", "fontStyle": "italic", "color": "#666"})
+			venn_component = html.Div(f"Could not generate pie chart: {str(e)}", style={
+				"textAlign": "center", 
+				"fontStyle": "italic", 
+				"color": "#666",
+				"height": "580px",
+				"display": "flex",
+				"alignItems": "center",
+				"justifyContent": "center"
+			})
 
-	# Settings for displaying pie chart or Venn diagram
-	pie_style = {"display": "block", "marginBottom": "20px"} if show_pie else {"display": "none"}
+	pie_style = {"display": "none"} 
+	venn_hpo_style = {"display": "block", "marginBottom": "20px"}
+
+	hpo_details = []
+	if all_hpo_terms:
+		for term_id in all_hpo_terms:
+			hpo_detail = fetch_hpo_term_details(term_id)
+			hpo_details.append(hpo_detail)
+
+	hpo_table_component = html.Div()
+	if hpo_details:
+		hpo_table_component = create_hpo_terms_table(hpo_details)
 
 	confidence_levels_present = sorted(df_unique["Confidence level"].unique(), reverse=True)
 	buttons = [
@@ -463,11 +1079,24 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		html.Div(summary_table, id="summary-table-content", style={"marginTop": "20px"})
 	])
 
-	return summary_layout, html.Div([
-		html.Div(buttons, className="mb-3", style={"textAlign": "center"}),
-		table_output,
-		dcc.Store(id="gene-data-store", data=tables_by_level)
-	]), venn_component, pie_component, pie_style, df_unique["Gene symbol"].tolist()
+	return (summary_layout, 
+	        html.Div([
+		        html.Div(buttons, className="mb-3", style={"textAlign": "center"}),
+		        table_output,
+		        dcc.Store(id="gene-data-store", data=tables_by_level)
+	        ]), 
+	        venn_component, 
+	        hpo_table_component,  
+	        venn_hpo_style,       
+	        pie_component, 
+	        pie_style, 
+	        df_unique["Gene symbol"].tolist(),
+	        all_hpo_terms,       
+	        updated_hpo_options)  
+
+# =============================================================================
+# CALLBACKS - TABLE INTERACTION
+# =============================================================================
 
 @app.callback(
 	Output("table-per-confidence", "children"),
@@ -499,25 +1128,73 @@ def check_gene_in_panel(n_clicks, n_submit, gene_name, gene_list):
 	else:
 		return f"❌ Gene '{gene_name}' is NOT present in the custom panel.", ""
 
-@app.callback(
-	Output("hr-venn", "style"),
-	Output("hr-summary", "style"),
-	Output("hr-table", "style"),
-	Input("load-genes-btn", "n_clicks"),
-	Input("reset-btn", "n_clicks"),
-	prevent_initial_call=True
+# =============================================================================
+# CLIENTSIDE CALLBACK - AUTO COPY TO CLIPBOARD WITH NOTIFICATION
+# =============================================================================
+
+app.clientside_callback(
+    """
+    function(generated_code) {
+        if (generated_code && generated_code.trim() !== '') {
+            // Use the modern Clipboard API if available
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(generated_code).then(function() {
+                    console.log('Code copied to clipboard successfully');
+                    showCopyNotification('✅ Code copied to clipboard!', 'success');
+                }).catch(function(err) {
+                    console.error('Failed to copy code: ', err);
+                    showCopyNotification('❌ Failed to copy code', 'error');
+                });
+            } else {
+                // Fallback for older browsers or non-secure contexts
+                const textArea = document.createElement('textarea');
+                textArea.value = generated_code;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    console.log('Code copied to clipboard successfully (fallback)');
+                    showCopyNotification('✅ Code copied to clipboard!', 'success');
+                } catch (err) {
+                    console.error('Failed to copy code (fallback): ', err);
+                    showCopyNotification('❌ Failed to copy code', 'error');
+                }
+                document.body.removeChild(textArea);
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    
+    function showCopyNotification(message, type) {
+        const notification = document.getElementById('copy-notification');
+        if (notification) {
+            notification.textContent = message;
+            notification.style.color = type === 'success' ? '#28a745' : '#dc3545';
+            notification.style.fontWeight = 'bold';
+            notification.style.fontSize = '14px';
+            
+            // Clear the notification after 3 seconds
+            setTimeout(function() {
+                notification.textContent = '';
+            }, 3000);
+        }
+    }
+    """,
+    Output("generated-code-output", "id"),  # Dummy output since we don't need to update anything
+    Input("generated-code-output", "value")
 )
-def toggle_hrs(n_load, n_reset):
-	ctx = dash.callback_context
-	if not ctx.triggered:
-		raise dash.exceptions.PreventUpdate
-	triggered = ctx.triggered[0]["prop_id"].split(".")[0]
-	if triggered == "load-genes-btn":
-		return {"display": "block"}, {"display": "block"}, {"display": "block"}
-	elif triggered == "reset-btn":
-		return {"display": "none"}, {"display": "none"}, {"display": "none"}
-	return dash.no_update, dash.no_update, dash.no_update
+
+# =============================================================================
+# APP RUN
+# =============================================================================
+
+#if __name__ == "__main__":
+#	app.run(debug=True)
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8050))
-    app.run(host="0.0.0.0", port=port)
+	port = int(os.environ.get("PORT", 8050))
+	app.run(host="0.0.0.0", port=port)
