@@ -33,31 +33,31 @@ from utils.panelapp_api import (
 
 PANEL_PRESETS = {
     "epilepsy": {
-        "name": "Epilepsy Panel Set",
+        "name": "Epilepsy",
         "icon": "mdi:brain",
-        "uk_panels": [], 
-        "au_panels": [],
+        "uk_panels": [402], 
+        "au_panels": [202],
         "internal": [],
-        "conf": [],
+        "conf": [3,2],
         "manual": [],
-        "hpo_terms": [] 
+        "hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
     },
     "cardiac": {
         "name": "Cardiac Conditions",
         "icon": "mdi:heart",
-        "uk_panels": [],
-        "au_panels": [],
+        "uk_panels": [749],
+        "au_panels": [253],
         "internal": [],
-        "conf": [],
+        "conf": [3,2],
         "manual": [],
-        "hpo_terms": []  
+        "hpo_terms": ["HP:0001638","HP:0001637"]  
     },
     "cancer_predisposition": {
-        "name": "Cancer Predisposition",
+        "name": "Colorectal Cancer Predisposition",
         "icon": "mdi:dna",
-        "uk_panels": [],
-        "au_panels": [],
-        "internal": [],
+        "uk_panels": [244],
+        "au_panels": [4371],
+        "internal": [3,2],
         "conf": [],
         "manual": [],
         "hpo_terms": []
@@ -181,6 +181,73 @@ def panel_options(df):
 
 def internal_options(df):
 	return [{"label": f"{row['panel_name']} (ID {row['panel_id']})", "value": row["panel_id"]} for _, row in df.iterrows()]
+
+# =============================================================================
+# UTILITY FUNCTIONS - PANEL SUMMARY GENERATION
+# =============================================================================
+
+def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_list, panels_uk_df, panels_au_df, internal_panels):
+    """Generate a formatted summary of panels and genes"""
+    summary_parts = []
+    
+    # Helper function to get confidence notation
+    def get_confidence_notation(conf_list):
+        if not conf_list:
+            return ""
+        conf_set = set(conf_list)
+        if conf_set == {3}:
+            return "_G"
+        elif conf_set == {2}:
+            return "_O"  
+        elif conf_set == {1}:
+            return "_R"
+        elif conf_set == {3, 2}:
+            return "_GO"
+        elif conf_set == {3, 1}:
+            return "_GR"
+        elif conf_set == {2, 1}:
+            return "_OR"
+        elif conf_set == {3, 2, 1}:
+            return "_GOR"
+        else:
+            return ""
+    
+    confidence_suffix = get_confidence_notation(confs)
+    
+    # Process UK panels
+    if uk_ids:
+        for panel_id in uk_ids:
+            panel_row = panels_uk_df[panels_uk_df['id'] == panel_id]
+            if not panel_row.empty:
+                panel_info = panel_row.iloc[0]
+                panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+                version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
+                summary_parts.append(f"PanelApp_UK/{panel_name}{version}{confidence_suffix}")
+    
+    # Process AU panels
+    if au_ids:
+        for panel_id in au_ids:
+            panel_row = panels_au_df[panels_au_df['id'] == panel_id]
+            if not panel_row.empty:
+                panel_info = panel_row.iloc[0]
+                panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+                version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
+                summary_parts.append(f"PanelApp_AUS/{panel_name}{version}{confidence_suffix}")
+    
+    # Process Internal panels
+    if internal_ids:
+        for panel_id in internal_ids:
+            panel_row = internal_panels[internal_panels['panel_id'] == panel_id]
+            if not panel_row.empty:
+                panel_info = panel_row.iloc[0]
+                panel_name = panel_info['panel_name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+                summary_parts.append(f"Internal/{panel_name}{confidence_suffix}")
+    
+    # Add manual genes
+    if manual_genes_list:
+        summary_parts.extend(manual_genes_list)
+    
+    return ",".join(summary_parts)
 
 # =============================================================================
 # UTILITY FUNCTIONS - CHART GENERATION
@@ -356,12 +423,6 @@ internal_panels = internal_df[["panel_id", "panel_name"]].drop_duplicates()
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # =============================================================================
-# DASH APP INITIALIZATION
-# =============================================================================
-
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
-
-# =============================================================================
 # APP LAYOUT
 # =============================================================================
 
@@ -486,12 +547,21 @@ app.layout = dbc.Container([
 			html.Div(dbc.Button("Generate Unique Code", id="generate-code-btn", color="primary"), 
 			        style={"textAlign": "center", "marginBottom": "10px"}),
 			html.Div([
+				html.Label("Unique Code:", style={"fontWeight": "bold", "marginBottom": "5px"}),
 				dcc.Textarea(id="generated-code-output", 
 				            style={"width": "80%", "maxWidth": "900px", "height": "60px", 
 				                   "margin": "0 auto", "display": "block"}, readOnly=True),
 				html.Div(id="copy-notification", 
 				        style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
-			], id="generated-code-container-text")
+			], id="generated-code-container-text"),
+			html.Div([
+				html.Label("Panel Summary:", style={"fontWeight": "bold", "marginBottom": "5px", "marginTop": "15px"}),
+				dcc.Textarea(id="panel-summary-output", 
+				            style={"width": "80%", "maxWidth": "900px", "height": "60px", 
+				                   "margin": "0 auto", "display": "block"}, readOnly=True),
+				html.Div(id="copy-notification-summary", 
+				        style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
+			], id="panel-summary-container-text")
 		]
 	),
 	html.Hr(),
@@ -704,6 +774,7 @@ def apply_preset(n_clicks_list, current_hpo_options):
 
 @app.callback(
 	Output("generated-code-output", "value", allow_duplicate=True),
+	Output("panel-summary-output", "value", allow_duplicate=True),
 	Input("generate-code-btn", "n_clicks"),
 	State("dropdown-uk", "value"),
 	State("dropdown-au", "value"),
@@ -713,7 +784,7 @@ def apply_preset(n_clicks_list, current_hpo_options):
 	State("hpo-search-dropdown", "value"),  
 	prevent_initial_call=True
 )
-def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual, hpo_terms):
+def generate_unique_code_and_summary(n_clicks, uk_ids, au_ids, internal_ids, confs, manual, hpo_terms):
 	manual_list = [g.strip() for g in manual.strip().splitlines() if g.strip()] if manual else []
 	config = {
 		"uk": uk_ids or [],
@@ -724,7 +795,20 @@ def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual, 
 		"hpo_terms": hpo_terms or []  
 	}
 	encoded = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
-	return encoded
+	
+	# Generate panel summary
+	summary = generate_panel_summary(
+		uk_ids or [], 
+		au_ids or [], 
+		internal_ids or [], 
+		confs or [], 
+		manual_list, 
+		panels_uk_df, 
+		panels_au_df, 
+		internal_panels
+	)
+	
+	return encoded, summary
 
 # =============================================================================
 # CALLBACKS - RESET AND IMPORT
@@ -748,6 +832,7 @@ def generate_unique_code(n_clicks, uk_ids, au_ids, internal_ids, confs, manual, 
 	Output("pie-chart-container", "style"),     
 	Output("gene-list-store", "data"),
 	Output("generated-code-output", "value"),
+	Output("panel-summary-output", "value"),
 	Input("reset-btn", "n_clicks"),
 	Input("import-panel-btn", "n_clicks"),
 	State("panel-code-input", "value"),
@@ -761,7 +846,7 @@ def handle_reset_or_import(n_reset, n_import, code):
 	triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
 	if triggered_id == "reset-btn":
-		return None, None, None, [3, 2], "", [], [], "", "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], ""
+		return None, None, None, [3, 2], "", [], [], "", "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], "", ""
 
 	if triggered_id == "import-panel-btn" and code:
 		try:
@@ -787,10 +872,10 @@ def handle_reset_or_import(n_reset, n_import, code):
 				hpo_terms,  
 				hpo_options, 
 				code,
-				"", "", "", "", {"display": "none"}, "", {"display": "none"}, [], ""
+				"", "", "", "", {"display": "none"}, "", {"display": "none"}, [], "", ""
 			)
 		except Exception:
-			return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+			return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 	raise dash.exceptions.PreventUpdate
 
@@ -808,7 +893,9 @@ def handle_reset_or_import(n_reset, n_import, code):
 	Output("pie-chart-container", "style", allow_duplicate=True),   
 	Output("gene-list-store", "data", allow_duplicate=True),
 	Output("hpo-search-dropdown", "value", allow_duplicate=True),  
-	Output("hpo-search-dropdown", "options", allow_duplicate=True), 
+	Output("hpo-search-dropdown", "options", allow_duplicate=True),
+	Output("generated-code-output", "value", allow_duplicate=True),
+	Output("panel-summary-output", "value", allow_duplicate=True), 
 	Input("load-genes-btn", "n_clicks"),
 	State("dropdown-uk", "value"),
 	State("dropdown-au", "value"),
@@ -821,7 +908,7 @@ def handle_reset_or_import(n_reset, n_import, code):
 )
 def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_internal_ids, selected_confidences, manual_genes, selected_hpo_terms, current_hpo_options):
 	if not n_clicks:
-		return "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], [], []
+		return "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], [], [], "", ""
 
 	# Use only the selected HPO terms, don't auto-add more
 	all_hpo_terms = selected_hpo_terms or []
@@ -904,7 +991,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			panel_versions["Manual"] = None
 
 	if not genes_combined:
-		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options
+		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options, "", ""
 
 	df_all = pd.concat(genes_combined)
 	df_all["confidence_level"] = df_all["confidence_level"].astype(int)
@@ -1092,7 +1179,9 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	        pie_style, 
 	        df_unique["Gene symbol"].tolist(),
 	        all_hpo_terms,       
-	        updated_hpo_options)  
+	        updated_hpo_options,
+	        "",  # Clear unique code
+	        "")  # Clear panel summary
 
 # =============================================================================
 # CALLBACKS - TABLE INTERACTION
@@ -1132,23 +1221,24 @@ def check_gene_in_panel(n_clicks, n_submit, gene_name, gene_list):
 # CLIENTSIDE CALLBACK - AUTO COPY TO CLIPBOARD WITH NOTIFICATION
 # =============================================================================
 
+# Add a clientside callback for the panel summary
 app.clientside_callback(
     """
-    function(generated_code) {
-        if (generated_code && generated_code.trim() !== '') {
+    function(panel_summary) {
+        if (panel_summary && panel_summary.trim() !== '') {
             // Use the modern Clipboard API if available
             if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(generated_code).then(function() {
-                    console.log('Code copied to clipboard successfully');
-                    showCopyNotification('✅ Code copied to clipboard!', 'success');
+                navigator.clipboard.writeText(panel_summary).then(function() {
+                    console.log('Panel summary copied to clipboard successfully');
+                    showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
                 }).catch(function(err) {
-                    console.error('Failed to copy code: ', err);
-                    showCopyNotification('❌ Failed to copy code', 'error');
+                    console.error('Failed to copy panel summary: ', err);
+                    showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
                 });
             } else {
                 // Fallback for older browsers or non-secure contexts
                 const textArea = document.createElement('textarea');
-                textArea.value = generated_code;
+                textArea.value = panel_summary;
                 textArea.style.position = 'fixed';
                 textArea.style.left = '-999999px';
                 textArea.style.top = '-999999px';
@@ -1157,11 +1247,11 @@ app.clientside_callback(
                 textArea.select();
                 try {
                     document.execCommand('copy');
-                    console.log('Code copied to clipboard successfully (fallback)');
-                    showCopyNotification('✅ Code copied to clipboard!', 'success');
+                    console.log('Panel summary copied to clipboard successfully (fallback)');
+                    showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
                 } catch (err) {
-                    console.error('Failed to copy code (fallback): ', err);
-                    showCopyNotification('❌ Failed to copy code', 'error');
+                    console.error('Failed to copy panel summary (fallback): ', err);
+                    showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
                 }
                 document.body.removeChild(textArea);
             }
@@ -1169,8 +1259,8 @@ app.clientside_callback(
         return window.dash_clientside.no_update;
     }
     
-    function showCopyNotification(message, type) {
-        const notification = document.getElementById('copy-notification');
+    function showCopyNotificationSummary(message, type) {
+        const notification = document.getElementById('copy-notification-summary');
         if (notification) {
             notification.textContent = message;
             notification.style.color = type === 'success' ? '#28a745' : '#dc3545';
@@ -1184,16 +1274,16 @@ app.clientside_callback(
         }
     }
     """,
-    Output("generated-code-output", "id"),  # Dummy output since we don't need to update anything
-    Input("generated-code-output", "value")
+    Output("panel-summary-output", "id"),  # Dummy output since we don't need to update anything
+    Input("panel-summary-output", "value")
 )
 
 # =============================================================================
 # APP RUN
 # =============================================================================
 
-#if __name__ == "__main__":
-#	app.run(debug=True)
+# if __name__ == "__main__":
+# 	app.run(debug=True)
 
 if __name__ == '__main__':
 	port = int(os.environ.get("PORT", 8050))
