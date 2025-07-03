@@ -20,6 +20,7 @@ import time
 from datetime import datetime
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
+import numpy as np
 from utils.panelapp_api import (
 	fetch_panels,
 	fetch_panel_genes,
@@ -32,46 +33,46 @@ from utils.panelapp_api import (
 # =============================================================================
 
 PANEL_PRESETS = {
-    "epilepsy": {
-        "name": "Epilepsy",
-        "icon": "mdi:brain",
-        "uk_panels": [402], 
-        "au_panels": [202],
-        "internal": [],
-        "conf": [3,2],
-        "manual": [],
-        "hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
-    },
-    "cardiac": {
-        "name": "Cardiac Conditions",
-        "icon": "mdi:heart",
-        "uk_panels": [749],
-        "au_panels": [253],
-        "internal": [],
-        "conf": [3,2],
-        "manual": [],
-        "hpo_terms": ["HP:0001638","HP:0001637"]  
-    },
-    "cancer_predisposition": {
-        "name": "Colorectal Cancer Predisposition",
-        "icon": "mdi:dna",
-        "uk_panels": [244],
-        "au_panels": [4371],
-        "internal": [3,2],
-        "conf": [],
-        "manual": [],
-        "hpo_terms": []
-    },
-    "neurodevelopmental": {
-        "name": "Neurodevelopmental Disorders",
-        "icon": "mdi:head-cog",
-        "uk_panels": [285],
-        "au_panels": [250],
-        "internal": [],
-        "conf": [3],
-        "manual": [],
-        "hpo_terms": ["HP:0012758", "HP:0001249"] 
-    }
+	"epilepsy": {
+		"name": "Epilepsy",
+		"icon": "mdi:brain",
+		"uk_panels": [402], 
+		"au_panels": [202],
+		"internal": [],
+		"conf": [3,2],
+		"manual": [],
+		"hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
+	},
+	"cardiac": {
+		"name": "Cardiac Conditions",
+		"icon": "mdi:heart",
+		"uk_panels": [749],
+		"au_panels": [253],
+		"internal": [],
+		"conf": [3,2],
+		"manual": [],
+		"hpo_terms": ["HP:0001638","HP:0001637"]  
+	},
+	"cancer_predisposition": {
+		"name": "Colorectal Cancer Predisposition",
+		"icon": "mdi:dna",
+		"uk_panels": [244],
+		"au_panels": [4371],
+		"internal": [3,2],
+		"conf": [],
+		"manual": [],
+		"hpo_terms": []
+	},
+	"neurodevelopmental": {
+		"name": "Neurodevelopmental Disorders",
+		"icon": "mdi:head-cog",
+		"uk_panels": [285],
+		"au_panels": [250],
+		"internal": [],
+		"conf": [3],
+		"manual": [],
+		"hpo_terms": ["HP:0012758", "HP:0001249"] 
+	}
 }
 
 # =============================================================================
@@ -187,114 +188,303 @@ def internal_options(df):
 # =============================================================================
 
 def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_list, panels_uk_df, panels_au_df, internal_panels):
-    """Generate a formatted summary of panels and genes"""
-    summary_parts = []
-    
-    # Helper function to get confidence notation
-    def get_confidence_notation(conf_list):
-        if not conf_list:
-            return ""
-        conf_set = set(conf_list)
-        if conf_set == {3}:
-            return "_G"
-        elif conf_set == {2}:
-            return "_O"  
-        elif conf_set == {1}:
-            return "_R"
-        elif conf_set == {3, 2}:
-            return "_GO"
-        elif conf_set == {3, 1}:
-            return "_GR"
-        elif conf_set == {2, 1}:
-            return "_OR"
-        elif conf_set == {3, 2, 1}:
-            return "_GOR"
-        else:
-            return ""
-    
-    confidence_suffix = get_confidence_notation(confs)
-    
-    # Process UK panels
-    if uk_ids:
-        for panel_id in uk_ids:
-            panel_row = panels_uk_df[panels_uk_df['id'] == panel_id]
-            if not panel_row.empty:
-                panel_info = panel_row.iloc[0]
-                panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
-                version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
-                summary_parts.append(f"PanelApp_UK/{panel_name}{version}{confidence_suffix}")
-    
-    # Process AU panels
-    if au_ids:
-        for panel_id in au_ids:
-            panel_row = panels_au_df[panels_au_df['id'] == panel_id]
-            if not panel_row.empty:
-                panel_info = panel_row.iloc[0]
-                panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
-                version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
-                summary_parts.append(f"PanelApp_AUS/{panel_name}{version}{confidence_suffix}")
-    
-    # Process Internal panels
-    if internal_ids:
-        for panel_id in internal_ids:
-            panel_row = internal_panels[internal_panels['panel_id'] == panel_id]
-            if not panel_row.empty:
-                panel_info = panel_row.iloc[0]
-                panel_name = panel_info['panel_name'].replace(' ', '_').replace('/', '_').replace(',', '_')
-                summary_parts.append(f"Internal/{panel_name}{confidence_suffix}")
-    
-    # Add manual genes
-    if manual_genes_list:
-        summary_parts.extend(manual_genes_list)
-    
-    return ",".join(summary_parts)
+	"""Generate a formatted summary of panels and genes"""
+	summary_parts = []
+	
+	# Helper function to get confidence notation
+	def get_confidence_notation(conf_list):
+		if not conf_list:
+			return ""
+		conf_set = set(conf_list)
+		if conf_set == {3}:
+			return "_G"
+		elif conf_set == {2}:
+			return "_O"  
+		elif conf_set == {1}:
+			return "_R"
+		elif conf_set == {3, 2}:
+			return "_GO"
+		elif conf_set == {3, 1}:
+			return "_GR"
+		elif conf_set == {2, 1}:
+			return "_OR"
+		elif conf_set == {3, 2, 1}:
+			return "_GOR"
+		else:
+			return ""
+	
+	confidence_suffix = get_confidence_notation(confs)
+	
+	# Process UK panels
+	if uk_ids:
+		for panel_id in uk_ids:
+			panel_row = panels_uk_df[panels_uk_df['id'] == panel_id]
+			if not panel_row.empty:
+				panel_info = panel_row.iloc[0]
+				panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+				version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
+				summary_parts.append(f"PanelApp_UK/{panel_name}{version}{confidence_suffix}")
+	
+	# Process AU panels
+	if au_ids:
+		for panel_id in au_ids:
+			panel_row = panels_au_df[panels_au_df['id'] == panel_id]
+			if not panel_row.empty:
+				panel_info = panel_row.iloc[0]
+				panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+				version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
+				summary_parts.append(f"PanelApp_AUS/{panel_name}{version}{confidence_suffix}")
+	
+	# Process Internal panels
+	if internal_ids:
+		for panel_id in internal_ids:
+			panel_row = internal_panels[internal_panels['panel_id'] == panel_id]
+			if not panel_row.empty:
+				panel_info = panel_row.iloc[0]
+				panel_name = panel_info['panel_name'].replace(' ', '_').replace('/', '_').replace(',', '_')
+				summary_parts.append(f"Internal/{panel_name}{confidence_suffix}")
+	
+	# Add manual genes
+	if manual_genes_list:
+		summary_parts.extend(manual_genes_list)
+	
+	return ",".join(summary_parts)
 
 # =============================================================================
 # UTILITY FUNCTIONS - CHART GENERATION
 # =============================================================================
 
 def generate_panel_pie_chart(panel_df, panel_name, version=None):
-    panel_df = panel_df[panel_df['confidence_level'] != 0]
-    
-    conf_counts = panel_df.groupby('confidence_level').size().reset_index(name='count')
-    conf_counts = conf_counts.sort_values('confidence_level', ascending=False)
-    
-    colors = ['#d4edda', '#fff3cd', '#f8d7da']  # Green, Yellow, Red for 3,2,1
-    
-    labels = [f"Confidence {level} ({count})" for level, count in 
-              zip(conf_counts['confidence_level'], conf_counts['count'])]
-    
-    fig, ax = plt.subplots(figsize=(9, 5))  
-    ax.pie(conf_counts['count'], labels=labels, colors=colors, autopct='%1.1f%%', 
-           startangle=90, wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
-    ax.axis('equal') 
+	panel_df = panel_df[panel_df['confidence_level'] != 0]
+	
+	conf_counts = panel_df.groupby('confidence_level').size().reset_index(name='count')
+	conf_counts = conf_counts.sort_values('confidence_level', ascending=False)
+	
+	colors = ['#d4edda', '#fff3cd', '#f8d7da']  # Green, Yellow, Red for 3,2,1
+	
+	labels = [f"Confidence {level} ({count})" for level, count in 
+			zip(conf_counts['confidence_level'], conf_counts['count'])]
+	
+	fig, ax = plt.subplots(figsize=(9, 5))  
+	ax.pie(conf_counts['count'], labels=labels, colors=colors, autopct='%1.1f%%', 
+		startangle=90, wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
+	ax.axis('equal') 
 
-    title = f"Gene Distribution - {panel_name}"
-    if version:
-        title += f" (v{version})"
+	title = f"Gene Distribution - {panel_name}"
+	if version:
+		title += f" (v{version})"
+	
+	# Convert plot to base64 image
+	buf = io.BytesIO()
+	plt.tight_layout()
+	plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
+	plt.close(fig)
+	data = base64.b64encode(buf.getbuffer()).decode("ascii")
+	
+	return html.Div([
+		html.H4(title, className="text-center mb-3", style={"fontSize": "16px"}),
+		html.Img(src=f"data:image/png;base64,{data}", 
+				style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
+	], style={
+		"border": "1px solid #999", 
+		"padding": "10px", 
+		"borderRadius": "8px", 
+		"maxWidth": "100%", 
+		"margin": "0",
+		"height": "580px",  
+		"display": "flex",
+		"flexDirection": "column",
+		"justifyContent": "center"
+	})
+
+def create_upset_plot(gene_sets, panel_names):
+    """Create an UpSet plot for visualizing intersections of multiple sets"""
+    from itertools import combinations, chain
     
-    # Convert plot to base64 image
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
-    plt.close(fig)
-    data = base64.b64encode(buf.getbuffer()).decode("ascii")
+    # Prepare data for UpSet plot
+    all_genes = set()
+    for genes in gene_sets.values():
+        all_genes.update(genes)
     
-    return html.Div([
-        html.H4(title, className="text-center mb-3", style={"fontSize": "16px"}),
-        html.Img(src=f"data:image/png;base64,{data}", 
-                style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
-    ], style={
-        "border": "1px solid #999", 
-        "padding": "10px", 
-        "borderRadius": "8px", 
-        "maxWidth": "100%", 
-        "margin": "0",
-        "height": "580px",  
-        "display": "flex",
-        "flexDirection": "column",
-        "justifyContent": "center"
-    })
+    if not all_genes:
+        return None
+    
+    # For each gene, find which sets it belongs to
+    gene_memberships = {}
+    sets_list = list(gene_sets.keys())
+    
+    for gene in all_genes:
+        membership = tuple(i for i, (name, genes) in enumerate(gene_sets.items()) if gene in genes)
+        if membership not in gene_memberships:
+            gene_memberships[membership] = []
+        gene_memberships[membership].append(gene)
+    
+    # Sort intersections: single sets first (panels), then multi-set intersections
+    single_sets = []  # Individual panels
+    multi_sets = []   # Intersections between panels
+    
+    for membership, genes in gene_memberships.items():
+        if len(membership) == 1:
+            # Single panel
+            single_sets.append((membership, genes))
+        else:
+            # Multi-panel intersection
+            multi_sets.append((membership, genes))
+    
+    # Sort single sets by size (largest first)
+    single_sets.sort(key=lambda x: len(x[1]), reverse=True)
+    
+    # Sort multi-set intersections by size (largest first)
+    multi_sets.sort(key=lambda x: len(x[1]), reverse=True)
+    
+    # Combine: panels first, then intersections (limit to max 10 total)
+    sorted_intersections = single_sets + multi_sets
+    max_intersections = min(10, len(sorted_intersections))
+    sorted_intersections = sorted_intersections[:max_intersections]
+    
+    # Create figure with higher DPI for crispness
+    fig, (ax_bars, ax_matrix) = plt.subplots(2, 1, figsize=(10, 5), dpi=120,
+                                           gridspec_kw={'height_ratios': [1, 1]})
+    
+    # Top plot: intersection sizes (VERTICAL bars)
+    intersection_sizes = [len(genes) for _, genes in sorted_intersections]
+    x_pos = np.arange(len(intersection_sizes))  # Use arange for perfect positioning
+    
+    # Create vertical bars with different colors for panels vs intersections
+    bar_colors = []
+    for membership, _ in sorted_intersections:
+        if len(membership) == 1:
+            bar_colors.append('#3498db')  # Blue for individual panels
+        else:
+            bar_colors.append('#2c3e50')  # Dark for intersections
+    
+    bars = ax_bars.bar(x_pos, intersection_sizes, color=bar_colors, alpha=0.8, width=0.6,
+                       edgecolor='white', linewidth=0.5)
+    ax_bars.set_ylabel('Number of Genes', fontsize=11, fontweight='bold')
+    ax_bars.set_title('Gene set Intersections', fontsize=13, fontweight='bold', pad=20)
+    ax_bars.set_xticks([])
+    ax_bars.grid(True, alpha=0.3, axis='y')
+    ax_bars.spines['top'].set_visible(False)
+    ax_bars.spines['right'].set_visible(False)
+    
+    # Set x-axis limits to match matrix exactly
+    ax_bars.set_xlim(-0.5, len(sorted_intersections) - 0.5)
+    
+    # Add value labels on top of bars
+    for i, (bar, size) in enumerate(zip(bars, intersection_sizes)):
+        ax_bars.text(i, bar.get_height() + max(intersection_sizes) * 0.01, 
+                    str(size), ha='center', va='bottom', fontweight='bold', fontsize=9)
+    
+    # Bottom plot: binary matrix with precise alignment
+    matrix_data = np.zeros((len(sets_list), len(sorted_intersections)))
+    for j, (membership, _) in enumerate(sorted_intersections):
+        for i in membership:
+            matrix_data[i, j] = 1
+    
+    # Clear the matrix plot
+    ax_matrix.clear()
+    
+    # Set up the matrix plot with EXACT alignment to bars
+    ax_matrix.set_xlim(-0.5, len(sorted_intersections) - 0.5)
+    ax_matrix.set_ylim(-0.5, len(sets_list) - 0.5)
+    
+    # Draw the matrix with perfect circles aligned with bars
+    circle_radius = 0.1 # Precise circles
+    for i in range(len(sets_list)):
+        for j in range(len(sorted_intersections)):
+            # Use EXACT same x positioning as bars: j (which matches x_pos[j])
+            x_center = float(j)  # Ensure float for perfect alignment
+            y_center = float(i)
+            
+            if matrix_data[i, j] == 1:
+                # Draw filled circle (black) - perfectly round
+                circle = plt.Circle((x_center, y_center), circle_radius, 
+                                  color='black', zorder=2, clip_on=False)
+                ax_matrix.add_patch(circle)
+            else:
+                # Draw empty circle (light gray) - smaller and subtle
+                circle = plt.Circle((x_center, y_center), circle_radius, 
+                                  fill=False, color='lightgray', 
+                                  linewidth=1, alpha=0.4, zorder=2, clip_on=False)
+                ax_matrix.add_patch(circle)
+    
+    # Connect dots vertically for each intersection with crisp lines
+    for j in range(len(sorted_intersections)):
+        connected = [k for k in range(len(sets_list)) if matrix_data[k, j] == 1]
+        if len(connected) > 1:
+            min_y, max_y = min(connected), max(connected)
+            x_line = float(j)  # Use same x positioning
+            ax_matrix.plot([x_line, x_line], [min_y, max_y], 'k-', linewidth=2.5, 
+                          alpha=1.0, zorder=2, solid_capstyle='round')
+    
+    # Extract origin and ID for display names WITH sizes
+    display_names = []
+    for name in sets_list:
+        set_size = len(gene_sets[name])
+        
+        if name == "Manual":
+            display_names.append(f"Manual ({set_size})")
+        elif name.startswith("UK_"):
+            panel_id = name.replace("UK_", "")
+            display_names.append(f"UK_{panel_id} ({set_size})")
+        elif name.startswith("AUS_"):
+            panel_id = name.replace("AUS_", "")
+            display_names.append(f"AUS_{panel_id} ({set_size})")
+        elif name.startswith("INT-"):
+            panel_id = name.replace("INT-", "")
+            display_names.append(f"INT_{panel_id} ({set_size})")
+        else:
+            display_names.append(f"{name} ({set_size})")
+    
+    # Set up y-axis with panel names INCLUDING sizes
+    ax_matrix.set_yticks(range(len(sets_list)))
+    ax_matrix.set_yticklabels(display_names, fontsize=10,)
+    ax_matrix.set_xticks([])
+    
+    # Remove the xlabel
+    ax_matrix.set_xlabel('')
+    
+    # Remove grid and spines for cleaner look
+    ax_matrix.grid(False)
+    ax_matrix.spines['top'].set_visible(False)
+    ax_matrix.spines['right'].set_visible(False)
+    ax_matrix.spines['bottom'].set_visible(False)
+    ax_matrix.spines['left'].set_visible(False)
+    
+    # Invert y-axis to match the order of bars above
+    ax_matrix.invert_yaxis()
+    
+    # Add a visual separator and better labels
+    separator_pos = -1
+    for j, (membership, _) in enumerate(sorted_intersections):
+        if len(membership) > 1:
+            separator_pos = j - 0.5
+            break
+    
+    # if separator_pos > 0:
+    #     # Draw a subtle vertical line to separate panels from intersections
+    #     ax_bars.axvline(x=separator_pos, color='gray', linestyle='--', alpha=0.6, linewidth=1)
+    #     ax_matrix.axvline(x=separator_pos, color='gray', linestyle='--', alpha=0.6, linewidth=1)
+        
+    #     # Add properly positioned section labels
+    #     # Individual panels label
+    #     individual_center = separator_pos / 2
+    #     ax_matrix.text(individual_center, -0.8, 'Individual Panels', 
+    #                   ha='center', va='top', fontsize=10, fontweight='bold', color='#3498db')
+        
+    #     # Intersections label  
+    #     intersections_center = separator_pos + (len(sorted_intersections) - separator_pos) / 2
+    #     ax_matrix.text(intersections_center, -0.8, 'Intersections', 
+    #                   ha='center', va='top', fontsize=10, fontweight='bold', color='#2c3e50')
+    
+    # Adjust layout with tighter spacing
+    plt.tight_layout(pad=1.5)
+    
+    # Set clean background
+    ax_matrix.set_facecolor('white')
+    ax_bars.set_facecolor('white')
+    
+    return fig
 
 def create_hpo_terms_table(hpo_details):
 	if not hpo_details:
@@ -378,33 +568,33 @@ def create_hpo_terms_table(hpo_details):
 # =============================================================================
 
 def create_sidebar():
-    return dbc.Offcanvas(
-        id="sidebar-offcanvas",
-        title="Quick Panel Presets",
-        is_open=False,
-        placement="start",
-        backdrop=False,
-        style={"width": "350px"},
-        children=[
-            # Quick Presets Section
-            html.Div([
-                #html.H5("Quick Presets", className="mb-3"),
-                html.Div(id="preset-buttons", children=[
-                    dbc.Button(
-                        [
-                            DashIconify(icon=preset["icon"], width=20, className="me-2"),
-                            preset["name"]
-                        ],
-                        id={"type": "preset-btn", "index": key},
-                        color="light",
-                        className="mb-2 w-100 text-start",
-                        n_clicks=0
-                    )
-                    for key, preset in PANEL_PRESETS.items()
-                ])
-            ], className="mb-4")
-        ]
-    )
+	return dbc.Offcanvas(
+		id="sidebar-offcanvas",
+		title="Quick Panel Presets",
+		is_open=False,
+		placement="start",
+		backdrop=False,
+		style={"width": "350px"},
+		children=[
+			# Quick Presets Section
+			html.Div([
+				#html.H5("Quick Presets", className="mb-3"),
+				html.Div(id="preset-buttons", children=[
+					dbc.Button(
+						[
+							DashIconify(icon=preset["icon"], width=20, className="me-2"),
+							preset["name"]
+						],
+						id={"type": "preset-btn", "index": key},
+						color="light",
+						className="mb-2 w-100 text-start",
+						n_clicks=0
+					)
+					for key, preset in PANEL_PRESETS.items()
+				])
+			], className="mb-4")
+		]
+	)
 
 # =============================================================================
 # DATA INITIALIZATION
@@ -465,7 +655,7 @@ app.layout = dbc.Container([
 				style={"width": "100%", "marginBottom": "5px"}
 			),
 			html.Small("ℹ️ HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
-			          className="text-muted", style={"fontSize": "11px"})
+					className="text-muted", style={"fontSize": "11px"})
 		])
 	]),
 	html.Hr(),
@@ -545,22 +735,22 @@ app.layout = dbc.Container([
 		style={"display": "none", "width": "100%"},
 		children=[
 			html.Div(dbc.Button("Generate Unique Code", id="generate-code-btn", color="primary"), 
-			        style={"textAlign": "center", "marginBottom": "10px"}),
+					style={"textAlign": "center", "marginBottom": "10px"}),
 			html.Div([
 				html.Label("Unique Code:", style={"fontWeight": "bold", "marginBottom": "5px"}),
 				dcc.Textarea(id="generated-code-output", 
-				            style={"width": "80%", "maxWidth": "900px", "height": "60px", 
-				                   "margin": "0 auto", "display": "block"}, readOnly=True),
+							style={"width": "80%", "maxWidth": "900px", "height": "60px", 
+								"margin": "0 auto", "display": "block"}, readOnly=True),
 				html.Div(id="copy-notification", 
-				        style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
+						style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
 			], id="generated-code-container-text"),
 			html.Div([
 				html.Label("Panel Summary:", style={"fontWeight": "bold", "marginBottom": "5px", "marginTop": "15px"}),
 				dcc.Textarea(id="panel-summary-output", 
-				            style={"width": "80%", "maxWidth": "900px", "height": "60px", 
-				                   "margin": "0 auto", "display": "block"}, readOnly=True),
+							style={"width": "80%", "maxWidth": "900px", "height": "60px", 
+								"margin": "0 auto", "display": "block"}, readOnly=True),
 				html.Div(id="copy-notification-summary", 
-				        style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
+						style={"textAlign": "center", "marginTop": "5px", "height": "20px"})
 			], id="panel-summary-container-text")
 		]
 	),
@@ -673,16 +863,16 @@ def toggle_import_section(n_show, n_cancel, n_import, n_reset):
 	prevent_initial_call=True
 )
 def toggle_code_visibility(n_build, n_reset):
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        raise dash.exceptions.PreventUpdate
+	ctx = dash.callback_context
+	if not ctx.triggered:
+		raise dash.exceptions.PreventUpdate
 
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
-    if triggered_id == "load-genes-btn":
-        return {"display": "block"}
-    elif triggered_id == "reset-btn":
-        return {"display": "none"}
-    return dash.no_update
+	triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+	if triggered_id == "load-genes-btn":
+		return {"display": "block"}
+	elif triggered_id == "reset-btn":
+		return {"display": "none"}
+	return dash.no_update
 
 @app.callback(
 	Output("hr-venn", "style"),
@@ -709,64 +899,64 @@ def toggle_hrs(n_load, n_reset):
 
 # Toggle sidebar
 @app.callback(
-    Output("sidebar-offcanvas", "is_open"),
-    Input("sidebar-toggle", "n_clicks"),
-    State("sidebar-offcanvas", "is_open"),
-    prevent_initial_call=True
+	Output("sidebar-offcanvas", "is_open"),
+	Input("sidebar-toggle", "n_clicks"),
+	State("sidebar-offcanvas", "is_open"),
+	prevent_initial_call=True
 )
 def toggle_sidebar(n_clicks, is_open):
-    if n_clicks:
-        return not is_open
-    return is_open
+	if n_clicks:
+		return not is_open
+	return is_open
 
 # Handle preset selection
 @app.callback(
-    Output("dropdown-uk", "value", allow_duplicate=True),
-    Output("dropdown-au", "value", allow_duplicate=True),
-    Output("dropdown-internal", "value", allow_duplicate=True),
-    Output("confidence-filter", "value", allow_duplicate=True),
-    Output("manual-genes", "value", allow_duplicate=True),
-    Output("hpo-search-dropdown", "value", allow_duplicate=True),
-    Output("hpo-search-dropdown", "options", allow_duplicate=True),  # Added this
-    Output("sidebar-offcanvas", "is_open", allow_duplicate=True),
-    Input({"type": "preset-btn", "index": ALL}, "n_clicks"),
-    State("hpo-search-dropdown", "options"),  # Added this
-    prevent_initial_call=True
+	Output("dropdown-uk", "value", allow_duplicate=True),
+	Output("dropdown-au", "value", allow_duplicate=True),
+	Output("dropdown-internal", "value", allow_duplicate=True),
+	Output("confidence-filter", "value", allow_duplicate=True),
+	Output("manual-genes", "value", allow_duplicate=True),
+	Output("hpo-search-dropdown", "value", allow_duplicate=True),
+	Output("hpo-search-dropdown", "options", allow_duplicate=True),  # Added this
+	Output("sidebar-offcanvas", "is_open", allow_duplicate=True),
+	Input({"type": "preset-btn", "index": ALL}, "n_clicks"),
+	State("hpo-search-dropdown", "options"),  # Added this
+	prevent_initial_call=True
 )
 def apply_preset(n_clicks_list, current_hpo_options):
-    ctx = dash.callback_context
-    if not ctx.triggered or all(n == 0 for n in n_clicks_list):
-        raise dash.exceptions.PreventUpdate
-    
-    # Find which preset was clicked
-    prop_id = ctx.triggered[0]["prop_id"]
-    preset_key = json.loads(prop_id.split(".")[0])["index"]
-    preset = PANEL_PRESETS[preset_key]
-    
-    # Get all values from preset with defaults
-    uk_panels = preset.get("uk_panels", [])
-    au_panels = preset.get("au_panels", [])
-    internal_panels = preset.get("internal", [])
-    conf_levels = preset.get("conf", [3, 2])  # Default to Green and Amber
-    manual_genes_list = preset.get("manual", [])
-    manual_genes_text = "\n".join(manual_genes_list) if manual_genes_list else ""
-    hpo_terms = preset.get("hpo_terms", [])
-    
-    # Create HPO options for the preset terms
-    updated_hpo_options = current_hpo_options or []
-    existing_option_values = [opt["value"] for opt in updated_hpo_options]
-    
-    for hpo_id in hpo_terms:
-        if hpo_id not in existing_option_values:
-            hpo_details = fetch_hpo_term_details(hpo_id)
-            option = {
-                "label": f"{hpo_details['name']} ({hpo_id})",
-                "value": hpo_id
-            }
-            updated_hpo_options.append(option)
-    
-    # Return all values AND close sidebar (False)
-    return uk_panels, au_panels, internal_panels, conf_levels, manual_genes_text, hpo_terms, updated_hpo_options, False
+	ctx = dash.callback_context
+	if not ctx.triggered or all(n == 0 for n in n_clicks_list):
+		raise dash.exceptions.PreventUpdate
+	
+	# Find which preset was clicked
+	prop_id = ctx.triggered[0]["prop_id"]
+	preset_key = json.loads(prop_id.split(".")[0])["index"]
+	preset = PANEL_PRESETS[preset_key]
+	
+	# Get all values from preset with defaults
+	uk_panels = preset.get("uk_panels", [])
+	au_panels = preset.get("au_panels", [])
+	internal_panels = preset.get("internal", [])
+	conf_levels = preset.get("conf", [3, 2])  # Default to Green and Amber
+	manual_genes_list = preset.get("manual", [])
+	manual_genes_text = "\n".join(manual_genes_list) if manual_genes_list else ""
+	hpo_terms = preset.get("hpo_terms", [])
+	
+	# Create HPO options for the preset terms
+	updated_hpo_options = current_hpo_options or []
+	existing_option_values = [opt["value"] for opt in updated_hpo_options]
+	
+	for hpo_id in hpo_terms:
+		if hpo_id not in existing_option_values:
+			hpo_details = fetch_hpo_term_details(hpo_id)
+			option = {
+				"label": f"{hpo_details['name']} ({hpo_id})",
+				"value": hpo_id
+			}
+			updated_hpo_options.append(option)
+	
+	# Return all values AND close sidebar (False)
+	return uk_panels, au_panels, internal_panels, conf_levels, manual_genes_text, hpo_terms, updated_hpo_options, False
 
 # =============================================================================
 # CALLBACKS - CODE GENERATION
@@ -1008,48 +1198,60 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in ["Confidence level", "Number of genes"]], data=summary.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"width": "100%"}), width=8)
 	])
 
-	show_venn = True
-	show_pie = False
-	single_panel_id = None
+	# NEW VISUALIZATION LOGIC WITH UPSET PLOT
 	venn_component = html.Div()
-	pie_component = html.Div()
-
-	active_panels = len([k for k in gene_sets.keys() if k != "Manual"])
-
-	if active_panels == 0 and "Manual" in gene_sets and len(manual_genes_list) > 0:
-		show_venn = False
-		show_pie = True
+	
+	# Remove empty sets and manual genes for counting active panels
+	active_panels = {k: v for k, v in gene_sets.items() if k != "Manual" and len(v) > 0}
+	manual_genes_present = "Manual" in gene_sets and len(gene_sets["Manual"]) > 0
+	
+	total_active = len(active_panels)
+	
+	# Case 1: Only manual genes
+	if total_active == 0 and manual_genes_present:
 		single_panel_id = "Manual"
-	elif active_panels == 1 and "Manual" not in gene_sets:
-		show_venn = False
-		show_pie = True
-		single_panel_id = next((k for k in gene_sets.keys() if k != "Manual"), None)
-	elif active_panels == 1 and "Manual" in gene_sets:
-		show_venn = True
-		show_pie = False
-	elif active_panels >= 2:
-		show_venn = True
-		show_pie = False
-
-	if show_venn:
-		valid_sets = [s for s in gene_sets.values() if len(s) > 0]
+		panel_df = panel_dataframes[single_panel_id]
+		panel_name = panel_names[single_panel_id]
+		panel_version = panel_versions[single_panel_id]
+		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
+	
+	# Case 2: Only one active panel (with or without manual)
+	elif total_active == 1:
+		single_panel_id = next(iter(active_panels.keys()))
+		panel_df = panel_dataframes[single_panel_id]
+		panel_name = panel_names[single_panel_id]
+		panel_version = panel_versions[single_panel_id]
+		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
+	
+	# Case 3: 2-3 panels - use traditional Venn diagram
+	elif 2 <= total_active <= 3:
+		# Include manual genes if present for Venn
+		venn_sets = active_panels.copy()
+		if manual_genes_present:
+			venn_sets["Manual"] = gene_sets["Manual"]
+		
+		valid_sets = [s for s in venn_sets.values() if len(s) > 0]
 		if 2 <= len(valid_sets) <= 3:
-			set_items = list(gene_sets.items())[:3]
-			labels = [s[0] for s in set_items]
+			set_items = list(venn_sets.items())[:3]
+			labels = [panel_names.get(s[0], s[0]) for s in set_items]
 			sets = [s[1] for s in set_items]
-			fig, ax = plt.subplots(figsize=(9, 5))  
+			
+			fig, ax = plt.subplots(figsize=(9, 5))
 			try:
 				if len(sets) == 2:
 					venn2(sets, set_labels=labels)
 				elif len(sets) == 3:
 					venn3(sets, set_labels=labels)
+				
 				buf = io.BytesIO()
 				plt.tight_layout()
 				plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
 				plt.close(fig)
 				data = base64.b64encode(buf.getbuffer()).decode("ascii")
+				
 				venn_component = html.Div([
-					html.Img(src=f"data:image/png;base64,{data}", style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
+					html.Img(src=f"data:image/png;base64,{data}", 
+							style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
 				], style={
 					"border": "1px solid #999", 
 					"padding": "10px", 
@@ -1062,7 +1264,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 					"justifyContent": "center"
 				})
 			except Exception as e:
-				venn_component = html.Div("Could not generate Venn diagram.", style={
+				venn_component = html.Div(f"Could not generate Venn diagram: {str(e)}", style={
 					"textAlign": "center", 
 					"fontStyle": "italic", 
 					"color": "#666",
@@ -1071,8 +1273,50 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 					"alignItems": "center",
 					"justifyContent": "center"
 				})
-		else:
-			venn_component = html.Div("Venn diagram not available for fewer than 2 or more than 3 groups.", style={
+	
+	# Case 4: 4+ panels - use UpSet plot
+	elif total_active >= 4:
+		# Include manual genes if present
+		upset_sets = active_panels.copy()
+		if manual_genes_present:
+			upset_sets["Manual"] = gene_sets["Manual"]
+		
+		try:
+			fig = create_upset_plot(upset_sets, panel_names)
+			if fig:
+				buf = io.BytesIO()
+				plt.tight_layout()
+				plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
+				plt.close(fig)
+				data = base64.b64encode(buf.getbuffer()).decode("ascii")
+				
+				venn_component = html.Div([
+					#html.H5("Panel Overlaps (UpSet Plot)", className="text-center mb-3", style={"fontSize": "16px"}),
+					html.Img(src=f"data:image/png;base64,{data}", 
+							style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
+				], style={
+					"border": "1px solid #999", 
+					"padding": "10px", 
+					"borderRadius": "8px", 
+					"maxWidth": "100%", 
+					"margin": "0",
+					"height": "580px",  
+					"display": "flex",
+					"flexDirection": "column",
+					"justifyContent": "center"
+				})
+			else:
+				venn_component = html.Div("Could not generate UpSet plot.", style={
+					"textAlign": "center", 
+					"fontStyle": "italic", 
+					"color": "#666",
+					"height": "580px",
+					"display": "flex",
+					"alignItems": "center",
+					"justifyContent": "center"
+				})
+		except Exception as e:
+			venn_component = html.Div(f"Error generating UpSet plot: {str(e)}", style={
 				"textAlign": "center", 
 				"fontStyle": "italic", 
 				"color": "#666",
@@ -1082,24 +1326,16 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				"justifyContent": "center"
 			})
 	
-	if show_pie and single_panel_id:
-		try:
-			panel_df = panel_dataframes[single_panel_id]
-			panel_name = panel_names[single_panel_id]
-			panel_version = panel_versions[single_panel_id]
-			pie_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
-			venn_component = pie_component
-			pie_component = html.Div()  
-		except Exception as e:
-			venn_component = html.Div(f"Could not generate pie chart: {str(e)}", style={
-				"textAlign": "center", 
-				"fontStyle": "italic", 
-				"color": "#666",
-				"height": "580px",
-				"display": "flex",
-				"alignItems": "center",
-				"justifyContent": "center"
-			})
+	else:
+		venn_component = html.Div("No panels selected.", style={
+			"textAlign": "center", 
+			"fontStyle": "italic", 
+			"color": "#666",
+			"height": "580px",
+			"display": "flex",
+			"alignItems": "center",
+			"justifyContent": "center"
+		})
 
 	pie_style = {"display": "none"} 
 	venn_hpo_style = {"display": "block", "marginBottom": "20px"}
@@ -1167,21 +1403,21 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	])
 
 	return (summary_layout, 
-	        html.Div([
-		        html.Div(buttons, className="mb-3", style={"textAlign": "center"}),
-		        table_output,
-		        dcc.Store(id="gene-data-store", data=tables_by_level)
-	        ]), 
-	        venn_component, 
-	        hpo_table_component,  
-	        venn_hpo_style,       
-	        pie_component, 
-	        pie_style, 
-	        df_unique["Gene symbol"].tolist(),
-	        all_hpo_terms,       
-	        updated_hpo_options,
-	        "",  # Clear unique code
-	        "")  # Clear panel summary
+			html.Div([
+				html.Div(buttons, className="mb-3", style={"textAlign": "center"}),
+				table_output,
+				dcc.Store(id="gene-data-store", data=tables_by_level)
+			]), 
+			venn_component, 
+			hpo_table_component,  
+			venn_hpo_style,       
+			html.Div(), 
+			pie_style, 
+			df_unique["Gene symbol"].tolist(),
+			all_hpo_terms,       
+			updated_hpo_options,
+			"",  # Clear unique code
+			"")  # Clear panel summary
 
 # =============================================================================
 # CALLBACKS - TABLE INTERACTION
@@ -1223,59 +1459,59 @@ def check_gene_in_panel(n_clicks, n_submit, gene_name, gene_list):
 
 # Add a clientside callback for the panel summary
 app.clientside_callback(
-    """
-    function(panel_summary) {
-        if (panel_summary && panel_summary.trim() !== '') {
-            // Use the modern Clipboard API if available
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(panel_summary).then(function() {
-                    console.log('Panel summary copied to clipboard successfully');
-                    showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
-                }).catch(function(err) {
-                    console.error('Failed to copy panel summary: ', err);
-                    showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
-                });
-            } else {
-                // Fallback for older browsers or non-secure contexts
-                const textArea = document.createElement('textarea');
-                textArea.value = panel_summary;
-                textArea.style.position = 'fixed';
-                textArea.style.left = '-999999px';
-                textArea.style.top = '-999999px';
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                try {
-                    document.execCommand('copy');
-                    console.log('Panel summary copied to clipboard successfully (fallback)');
-                    showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
-                } catch (err) {
-                    console.error('Failed to copy panel summary (fallback): ', err);
-                    showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
-                }
-                document.body.removeChild(textArea);
-            }
-        }
-        return window.dash_clientside.no_update;
-    }
-    
-    function showCopyNotificationSummary(message, type) {
-        const notification = document.getElementById('copy-notification-summary');
-        if (notification) {
-            notification.textContent = message;
-            notification.style.color = type === 'success' ? '#28a745' : '#dc3545';
-            notification.style.fontWeight = 'bold';
-            notification.style.fontSize = '14px';
-            
-            // Clear the notification after 3 seconds
-            setTimeout(function() {
-                notification.textContent = '';
-            }, 3000);
-        }
-    }
-    """,
-    Output("panel-summary-output", "id"),  # Dummy output since we don't need to update anything
-    Input("panel-summary-output", "value")
+	"""
+	function(panel_summary) {
+		if (panel_summary && panel_summary.trim() !== '') {
+			// Use the modern Clipboard API if available
+			if (navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(panel_summary).then(function() {
+					console.log('Panel summary copied to clipboard successfully');
+					showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
+				}).catch(function(err) {
+					console.error('Failed to copy panel summary: ', err);
+					showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
+				});
+			} else {
+				// Fallback for older browsers or non-secure contexts
+				const textArea = document.createElement('textarea');
+				textArea.value = panel_summary;
+				textArea.style.position = 'fixed';
+				textArea.style.left = '-999999px';
+				textArea.style.top = '-999999px';
+				document.body.appendChild(textArea);
+				textArea.focus();
+				textArea.select();
+				try {
+					document.execCommand('copy');
+					console.log('Panel summary copied to clipboard successfully (fallback)');
+					showCopyNotificationSummary('✅ Panel summary copied to clipboard!', 'success');
+				} catch (err) {
+					console.error('Failed to copy panel summary (fallback): ', err);
+					showCopyNotificationSummary('❌ Failed to copy panel summary', 'error');
+				}
+				document.body.removeChild(textArea);
+			}
+		}
+		return window.dash_clientside.no_update;
+	}
+	
+	function showCopyNotificationSummary(message, type) {
+		const notification = document.getElementById('copy-notification-summary');
+		if (notification) {
+			notification.textContent = message;
+			notification.style.color = type === 'success' ? '#28a745' : '#dc3545';
+			notification.style.fontWeight = 'bold';
+			notification.style.fontSize = '14px';
+			
+			// Clear the notification after 3 seconds
+			setTimeout(function() {
+				notification.textContent = '';
+			}, 3000);
+		}
+	}
+	""",
+	Output("panel-summary-output", "id"),  # Dummy output since we don't need to update anything
+	Input("panel-summary-output", "value")
 )
 
 # =============================================================================
