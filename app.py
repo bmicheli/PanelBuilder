@@ -262,7 +262,7 @@ def generate_panel_pie_chart(panel_df, panel_name, version=None):
 	
 	colors = ['#d4edda', '#fff3cd', '#f8d7da']  # Green, Yellow, Red for 3,2,1
 	
-	labels = [f"Confidence {level} ({count})" for level, count in 
+	labels = [f"{count} genes" for level, count in 
 			zip(conf_counts['confidence_level'], conf_counts['count'])]
 	
 	fig, ax = plt.subplots(figsize=(9, 5))  
@@ -339,7 +339,7 @@ def create_upset_plot(gene_sets, panel_names):
     
     # Combine: panels first, then intersections (limit to max 10 total)
     sorted_intersections = single_sets + multi_sets
-    max_intersections = min(10, len(sorted_intersections))
+    max_intersections = min(15, len(sorted_intersections))
     sorted_intersections = sorted_intersections[:max_intersections]
     
     # Create figure with higher DPI for crispness
@@ -361,7 +361,7 @@ def create_upset_plot(gene_sets, panel_names):
     bars = ax_bars.bar(x_pos, intersection_sizes, color=bar_colors, alpha=0.8, width=0.6,
                        edgecolor='white', linewidth=0.5)
     ax_bars.set_ylabel('Number of Genes', fontsize=11, fontweight='bold')
-    ax_bars.set_title('Gene set Intersections', fontsize=13, fontweight='bold', pad=20)
+    ax_bars.set_title('Gene Panel Intersections', fontsize=13, fontweight='bold', pad=20)
     ax_bars.set_xticks([])
     ax_bars.grid(True, alpha=0.3, axis='y')
     ax_bars.spines['top'].set_visible(False)
@@ -460,22 +460,6 @@ def create_upset_plot(gene_sets, panel_names):
         if len(membership) > 1:
             separator_pos = j - 0.5
             break
-    
-    # if separator_pos > 0:
-    #     # Draw a subtle vertical line to separate panels from intersections
-    #     ax_bars.axvline(x=separator_pos, color='gray', linestyle='--', alpha=0.6, linewidth=1)
-    #     ax_matrix.axvline(x=separator_pos, color='gray', linestyle='--', alpha=0.6, linewidth=1)
-        
-    #     # Add properly positioned section labels
-    #     # Individual panels label
-    #     individual_center = separator_pos / 2
-    #     ax_matrix.text(individual_center, -0.8, 'Individual Panels', 
-    #                   ha='center', va='top', fontsize=10, fontweight='bold', color='#3498db')
-        
-    #     # Intersections label  
-    #     intersections_center = separator_pos + (len(sorted_intersections) - separator_pos) / 2
-    #     ax_matrix.text(intersections_center, -0.8, 'Intersections', 
-    #                   ha='center', va='top', fontsize=10, fontweight='bold', color='#2c3e50')
     
     # Adjust layout with tighter spacing
     plt.tight_layout(pad=1.5)
@@ -654,8 +638,22 @@ app.layout = dbc.Container([
 				options=[],
 				style={"width": "100%", "marginBottom": "5px"}
 			),
-			html.Small("ℹ️ HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
-					className="text-muted", style={"fontSize": "11px"})
+			html.Div([
+				html.Small("ℹ️ HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
+						className="text-muted", style={"fontSize": "11px"}),
+				dcc.Loading(
+					id="hpo-loading",
+					type="default",
+					children=html.Div(id="hpo-loading-output"),
+					style={
+						"display": "inline-block", 
+						"marginLeft": "40px",
+						"marginTop": "2px",
+						"transform": "scale(0.6)",  # Make spinner smaller
+						"transformOrigin": "center"
+					}
+				)
+			], style={"display": "flex", "alignItems": "center"})
 		])
 	]),
 	html.Hr(),
@@ -734,10 +732,10 @@ app.layout = dbc.Container([
 		id="generate-code-section",
 		style={"display": "none", "width": "100%"},
 		children=[
-			html.Div(dbc.Button("Generate Unique Code", id="generate-code-btn", color="primary"), 
+			html.Div(dbc.Button("Generate Code", id="generate-code-btn", color="primary"), 
 					style={"textAlign": "center", "marginBottom": "10px"}),
 			html.Div([
-				html.Label("Unique Code:", style={"fontWeight": "bold", "marginBottom": "5px"}),
+				html.Label("Import Code:", style={"fontWeight": "bold", "marginBottom": "5px"}),
 				dcc.Textarea(id="generated-code-output", 
 							style={"width": "80%", "maxWidth": "900px", "height": "60px", 
 								"margin": "0 auto", "display": "block"}, readOnly=True),
@@ -764,6 +762,7 @@ app.layout = dbc.Container([
 @app.callback(
 	Output("hpo-search-dropdown", "value", allow_duplicate=True),
 	Output("hpo-search-dropdown", "options", allow_duplicate=True),
+	Output("hpo-loading-output", "children", allow_duplicate=True),
 	Input("dropdown-au", "value"),  
 	State("hpo-search-dropdown", "value"),
 	State("hpo-search-dropdown", "options"),
@@ -771,12 +770,12 @@ app.layout = dbc.Container([
 )
 def auto_generate_hpo_from_panels_preview(au_ids, current_hpo_values, current_hpo_options):
 	if not au_ids:
-		return current_hpo_values or [], current_hpo_options or []
+		return current_hpo_values or [], current_hpo_options or [], html.Div()
 	
 	panel_hpo_terms = get_hpo_terms_from_panels(uk_ids=None, au_ids=au_ids)
 	
 	if not panel_hpo_terms:
-		return current_hpo_values or [], current_hpo_options or []
+		return current_hpo_values or [], current_hpo_options or [], html.Div()
 	
 	new_hpo_options = []
 	new_hpo_values = []
@@ -803,7 +802,7 @@ def auto_generate_hpo_from_panels_preview(au_ids, current_hpo_values, current_hp
 		if option["value"] not in existing_option_values:
 			all_options.append(option)
 	
-	return all_values, all_options
+	return all_values, all_options, html.Div()
 
 @app.callback(
 	Output("hpo-search-dropdown", "options", allow_duplicate=True),
@@ -917,10 +916,10 @@ def toggle_sidebar(n_clicks, is_open):
 	Output("confidence-filter", "value", allow_duplicate=True),
 	Output("manual-genes", "value", allow_duplicate=True),
 	Output("hpo-search-dropdown", "value", allow_duplicate=True),
-	Output("hpo-search-dropdown", "options", allow_duplicate=True),  # Added this
+	Output("hpo-search-dropdown", "options", allow_duplicate=True),
 	Output("sidebar-offcanvas", "is_open", allow_duplicate=True),
 	Input({"type": "preset-btn", "index": ALL}, "n_clicks"),
-	State("hpo-search-dropdown", "options"),  # Added this
+	State("hpo-search-dropdown", "options"),
 	prevent_initial_call=True
 )
 def apply_preset(n_clicks_list, current_hpo_options):
@@ -1198,7 +1197,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in ["Confidence level", "Number of genes"]], data=summary.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"width": "100%"}), width=8)
 	])
 
-	# NEW VISUALIZATION LOGIC WITH UPSET PLOT
+	# NEW VISUALIZATION LOGIC WITH UPSET PLOT AND FIXED VENN LABELS
 	venn_component = html.Div()
 	
 	# Remove empty sets and manual genes for counting active panels
@@ -1223,7 +1222,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		panel_version = panel_versions[single_panel_id]
 		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
 	
-	# Case 3: 2-3 panels - use traditional Venn diagram
+	# Case 3: 2-3 panels - use traditional Venn diagram with FIXED LABELS
 	elif 2 <= total_active <= 3:
 		# Include manual genes if present for Venn
 		venn_sets = active_panels.copy()
@@ -1233,7 +1232,24 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		valid_sets = [s for s in venn_sets.values() if len(s) > 0]
 		if 2 <= len(valid_sets) <= 3:
 			set_items = list(venn_sets.items())[:3]
-			labels = [panel_names.get(s[0], s[0]) for s in set_items]
+			
+			# MODIFIED: Use panel IDs instead of full names for labels
+			labels = []
+			for panel_key, _ in set_items:
+				if panel_key == "Manual":
+					labels.append("Manual")
+				elif panel_key.startswith("UK_"):
+					panel_id = panel_key.replace("UK_", "")
+					labels.append(f"UK_{panel_id}")
+				elif panel_key.startswith("AUS_"):
+					panel_id = panel_key.replace("AUS_", "")
+					labels.append(f"AUS_{panel_id}")
+				elif panel_key.startswith("INT-"):
+					panel_id = panel_key.replace("INT-", "")
+					labels.append(f"INT_{panel_id}")
+				else:
+					labels.append(panel_key)
+			
 			sets = [s[1] for s in set_items]
 			
 			fig, ax = plt.subplots(figsize=(9, 5))
@@ -1291,7 +1307,6 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				data = base64.b64encode(buf.getbuffer()).decode("ascii")
 				
 				venn_component = html.Div([
-					#html.H5("Panel Overlaps (UpSet Plot)", className="text-center mb-3", style={"fontSize": "16px"}),
 					html.Img(src=f"data:image/png;base64,{data}", 
 							style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
 				], style={
@@ -1518,9 +1533,9 @@ app.clientside_callback(
 # APP RUN
 # =============================================================================
 
-# if __name__ == "__main__":
-# 	app.run(debug=True)
+if __name__ == "__main__":
+	app.run(debug=True)
 
-if __name__ == '__main__':
-	port = int(os.environ.get("PORT", 8050))
-	app.run(host="0.0.0.0", port=port)
+# if __name__ == '__main__':
+# 	port = int(os.environ.get("PORT", 8050))
+# 	app.run(host="0.0.0.0", port=port)
