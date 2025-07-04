@@ -29,6 +29,53 @@ from utils.panelapp_api import (
 )
 
 # =============================================================================
+# PANEL PRESETS CONFIGURATION
+# =============================================================================
+
+PANEL_PRESETS = {
+	"epilepsy": {
+		"name": "Epilepsy",
+		"icon": "mdi:brain",
+		"uk_panels": [402], 
+		"au_panels": [202],
+		"internal": [],
+		"conf": [3,2],
+		"manual": [],
+		"hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
+	},
+	"cardiac": {
+		"name": "Cardiac Conditions",
+		"icon": "mdi:heart",
+		"uk_panels": [749],
+		"au_panels": [253],
+		"internal": [],
+		"conf": [3,2],
+		"manual": [],
+		"hpo_terms": ["HP:0001638","HP:0001637"]  
+	},
+	"cancer_predisposition": {
+		"name": "Colorectal Cancer Predisposition",
+		"icon": "mdi:dna",
+		"uk_panels": [244],
+		"au_panels": [4371],
+		"internal": [],
+		"conf": [3,2],
+		"manual": [],
+		"hpo_terms": []
+	},
+	"neurodevelopmental": {
+		"name": "Neurodevelopmental Disorders",
+		"icon": "mdi:head-cog",
+		"uk_panels": [285],
+		"au_panels": [250],
+		"internal": [8801],
+		"conf": [3],
+		"manual": [],
+		"hpo_terms": ["HP:0012758", "HP:0001249"] 
+	}
+}
+
+# =============================================================================
 # INTERNAL PANELS MANAGEMENT
 # =============================================================================
 
@@ -157,52 +204,6 @@ def load_internal_panels_from_files(directory_path="data/internal_panels"):
 	
 	return internal_df, internal_panels
 
-# =============================================================================
-# PANEL PRESETS CONFIGURATION
-# =============================================================================
-
-PANEL_PRESETS = {
-	"epilepsy": {
-		"name": "Epilepsy",
-		"icon": "mdi:brain",
-		"uk_panels": [402], 
-		"au_panels": [202],
-		"internal": [],
-		"conf": [3,2],
-		"manual": [],
-		"hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
-	},
-	"cardiac": {
-		"name": "Cardiac Conditions",
-		"icon": "mdi:heart",
-		"uk_panels": [749],
-		"au_panels": [253],
-		"internal": [],
-		"conf": [3,2],
-		"manual": [],
-		"hpo_terms": ["HP:0001638","HP:0001637"]  
-	},
-	"cancer_predisposition": {
-		"name": "Colorectal Cancer Predisposition",
-		"icon": "mdi:dna",
-		"uk_panels": [244],
-		"au_panels": [4371],
-		"internal": [],
-		"conf": [3,2],
-		"manual": [],
-		"hpo_terms": []
-	},
-	"neurodevelopmental": {
-		"name": "Neurodevelopmental Disorders",
-		"icon": "mdi:head-cog",
-		"uk_panels": [285],
-		"au_panels": [250],
-		"internal": [8801],
-		"conf": [3],
-		"manual": [],
-		"hpo_terms": ["HP:0012758", "HP:0001249"] 
-	}
-}
 
 # =============================================================================
 # UTILITY FUNCTIONS - HPO MANAGEMENT
@@ -734,7 +735,7 @@ def create_hpo_terms_table(hpo_details):
 def create_sidebar():
 	return dbc.Offcanvas(
 		id="sidebar-offcanvas",
-		title="Quick Panel Presets",
+		title="Panel Presets",
 		is_open=False,
 		placement="start",
 		backdrop=False,
@@ -1073,7 +1074,7 @@ def toggle_hrs(n_load, n_reset):
 	return dash.no_update, dash.no_update, dash.no_update
 
 # =============================================================================
-# CALLBACKS - NEW FEATURES (SIDEBAR)
+# CALLBACKS - SIDEBAR MANAGEMENT
 # =============================================================================
 
 # Toggle sidebar
