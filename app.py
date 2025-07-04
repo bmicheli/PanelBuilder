@@ -315,7 +315,7 @@ def internal_options(df):
 		version_text = f" v{row['version']}" if 'version' in row and pd.notna(row['version']) else ""
 		# Use the base_name for display, replacing underscores with spaces for readability
 		display_name = row['panel_name'].replace('_', ' ')
-		label = f"{display_name}{version_text} (ID {row['panel_id']}, {row['gene_count']} genes)"
+		label = f"{display_name}{version_text} (ID {row['panel_id']})"
 		options.append({"label": label, "value": row["panel_id"]})
 	return options
 
