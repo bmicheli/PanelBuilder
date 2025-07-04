@@ -29,6 +29,135 @@ from utils.panelapp_api import (
 )
 
 # =============================================================================
+# INTERNAL PANELS MANAGEMENT
+# =============================================================================
+
+def load_internal_panels_from_files(directory_path="data/internal_panels"):
+	"""Load internal panels directly from .txt files in the specified directory"""
+	
+	internal_data = []
+	panel_info = []
+	
+	if not os.path.exists(directory_path):
+		print(f"Warning: Directory {directory_path} does not exist")
+		return pd.DataFrame(), pd.DataFrame()
+	
+	txt_files = sorted([f for f in os.listdir(directory_path) if f.endswith('.txt')])
+	
+	def generate_stable_id(filename):
+
+		import hashlib
+		
+		# Parse filename to extract just the panel name part
+		base_name = filename.replace('.txt', '')
+		parts = base_name.split('_')
+		
+		# Find version part (starts with 'v')
+		version_idx = -1
+		for i, part in enumerate(parts):
+			if part.startswith('v') and part[1:].isdigit():
+				version_idx = i
+				break
+		
+		if version_idx == -1:
+			# No version found, use whole filename
+			panel_name_for_id = base_name
+		else:
+			# Extract gene count (part before version)
+			if version_idx > 0 and parts[version_idx - 1].isdigit():
+				# Panel name is everything before gene count
+				panel_name_parts = parts[:version_idx - 1]
+			else:
+				# Panel name is everything before version
+				panel_name_parts = parts[:version_idx]
+			
+			panel_name_for_id = '_'.join(panel_name_parts)
+		
+		# Generate hash from panel name only (not gene count or version)
+		hash_obj = hashlib.md5(panel_name_for_id.encode())
+		hash_hex = hash_obj.hexdigest()[:8]  # Take first 8 characters
+		hash_int = int(hash_hex, 16) % 8999 + 2000  # Range: 2000-10999
+		return hash_int
+	
+	for file_name in txt_files:
+		try:
+			# Parse filename: Name_NumberOfGenes_vVersion.txt
+			base_name = file_name.replace('.txt', '')
+			parts = base_name.split('_')
+			
+			# Find version part (starts with 'v')
+			version_idx = -1
+			for i, part in enumerate(parts):
+				if part.startswith('v') and part[1:].isdigit():
+					version_idx = i
+					break
+			
+			if version_idx == -1:
+				print(f"Warning: Could not parse version from {file_name}")
+				continue
+			
+			# Extract version
+			version = int(parts[version_idx][1:])
+			
+			# Extract gene count (part before version)
+			if version_idx > 0 and parts[version_idx - 1].isdigit():
+				gene_count_from_filename = int(parts[version_idx - 1])
+				# Panel name is everything before gene count
+				panel_name_parts = parts[:version_idx - 1]
+			else:
+				# Fallback: assume last number before version is gene count
+				gene_count_from_filename = 0
+				panel_name_parts = parts[:version_idx]
+			
+			# Keep original filename format for panel name (with underscores)
+			panel_name = '_'.join(panel_name_parts)
+			
+			# Generate stable ID based on filename
+			panel_id = generate_stable_id(file_name)
+			
+			# Read genes from file
+			file_path = os.path.join(directory_path, file_name)
+			with open(file_path, 'r', encoding='utf-8') as f:
+				genes = [line.strip() for line in f if line.strip()]
+			
+			actual_gene_count = len(genes)
+			
+			# Add panel info
+			panel_info.append({
+				'panel_id': panel_id,
+				'panel_name': panel_name,
+				'version': version,
+				'gene_count': actual_gene_count,
+				'gene_count_filename': gene_count_from_filename,
+				'file_name': file_name,
+				'base_name': base_name  # Store original filename without extension
+			})
+			
+			# Add genes with default confidence level 3 (Green)
+			for gene in genes:
+				internal_data.append({
+					'panel_id': panel_id,
+					'panel_name': panel_name,
+					'gene_symbol': gene,
+					'confidence_level': 3  # Default to Green confidence
+				})
+		
+		except Exception as e:
+			print(f"Error processing file {file_name}: {e}")
+			continue
+	
+	internal_df = pd.DataFrame(internal_data)
+	internal_panels = pd.DataFrame(panel_info).sort_values('panel_id')  # Sort by ID for display
+	
+	# print(f"Loaded {len(internal_panels)} internal panels with {len(internal_df)} total genes")
+	# print("Panel IDs assigned (stable across versions, won't change when adding new panels):")
+	for _, panel in internal_panels.iterrows():
+		panel_name_for_id = panel['panel_name']  # This is what the ID is based on
+		# print(f"  ID {panel['panel_id']}: {panel['file_name']} ({panel['gene_count']} genes) [ID based on: {panel_name_for_id}]")
+	
+	return internal_df, internal_panels
+
+# =============================================================================
 # PANEL PRESETS CONFIGURATION
 # =============================================================================
 
@@ -58,8 +187,8 @@ PANEL_PRESETS = {
 		"icon": "mdi:dna",
 		"uk_panels": [244],
 		"au_panels": [4371],
-		"internal": [3,2],
-		"conf": [],
+		"internal": [],
+		"conf": [3,2],
 		"manual": [],
 		"hpo_terms": []
 	},
@@ -68,7 +197,7 @@ PANEL_PRESETS = {
 		"icon": "mdi:head-cog",
 		"uk_panels": [285],
 		"au_panels": [250],
-		"internal": [],
+		"internal": [8801],
 		"conf": [3],
 		"manual": [],
 		"hpo_terms": ["HP:0012758", "HP:0001249"] 
@@ -181,7 +310,14 @@ def panel_options(df):
 	return options
 
 def internal_options(df):
-	return [{"label": f"{row['panel_name']} (ID {row['panel_id']})", "value": row["panel_id"]} for _, row in df.iterrows()]
+	options = []
+	for _, row in df.iterrows():
+		version_text = f" v{row['version']}" if 'version' in row and pd.notna(row['version']) else ""
+		# Use the base_name for display, replacing underscores with spaces for readability
+		display_name = row['panel_name'].replace('_', ' ')
+		label = f"{display_name}{version_text} (ID {row['panel_id']}, {row['gene_count']} genes)"
+		options.append({"label": label, "value": row["panel_id"]})
+	return options
 
 # =============================================================================
 # UTILITY FUNCTIONS - PANEL SUMMARY GENERATION
@@ -241,8 +377,10 @@ def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_lis
 			panel_row = internal_panels[internal_panels['panel_id'] == panel_id]
 			if not panel_row.empty:
 				panel_info = panel_row.iloc[0]
-				panel_name = panel_info['panel_name'].replace(' ', '_').replace('/', '_').replace(',', '_')
-				summary_parts.append(f"Internal/{panel_name}{confidence_suffix}")
+				# Use the base_name (original filename without .txt) for the summary
+				base_name = panel_info.get('base_name', panel_info['panel_name'])
+				gene_count = panel_info['gene_count']
+				summary_parts.append(f"Panel_HUG/{base_name}")
 	
 	# Add manual genes
 	if manual_genes_list:
@@ -255,7 +393,7 @@ def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_lis
 # =============================================================================
 
 def generate_panel_pie_chart(panel_df, panel_name, version=None):
-	panel_df = panel_df[panel_df['confidence_level'] != 0]
+	panel_df = panel_df[panel_df['confidence_level'] != 0].copy()
 	
 	conf_counts = panel_df.groupby('confidence_level').size().reset_index(name='count')
 	conf_counts = conf_counts.sort_values('confidence_level', ascending=False)
@@ -298,177 +436,219 @@ def generate_panel_pie_chart(panel_df, panel_name, version=None):
 	})
 
 def create_upset_plot(gene_sets, panel_names):
-    """Create an UpSet plot for visualizing intersections of multiple sets"""
-    from itertools import combinations, chain
-    
-    # Prepare data for UpSet plot
-    all_genes = set()
-    for genes in gene_sets.values():
-        all_genes.update(genes)
-    
-    if not all_genes:
-        return None
-    
-    # For each gene, find which sets it belongs to
-    gene_memberships = {}
-    sets_list = list(gene_sets.keys())
-    
-    for gene in all_genes:
-        membership = tuple(i for i, (name, genes) in enumerate(gene_sets.items()) if gene in genes)
-        if membership not in gene_memberships:
-            gene_memberships[membership] = []
-        gene_memberships[membership].append(gene)
-    
-    # Sort intersections: single sets first (panels), then multi-set intersections
-    single_sets = []  # Individual panels
-    multi_sets = []   # Intersections between panels
-    
-    for membership, genes in gene_memberships.items():
-        if len(membership) == 1:
-            # Single panel
-            single_sets.append((membership, genes))
-        else:
-            # Multi-panel intersection
-            multi_sets.append((membership, genes))
-    
-    # Sort single sets by size (largest first)
-    single_sets.sort(key=lambda x: len(x[1]), reverse=True)
-    
-    # Sort multi-set intersections by size (largest first)
-    multi_sets.sort(key=lambda x: len(x[1]), reverse=True)
-    
-    # Combine: panels first, then intersections (limit to max 10 total)
-    sorted_intersections = single_sets + multi_sets
-    max_intersections = min(15, len(sorted_intersections))
-    sorted_intersections = sorted_intersections[:max_intersections]
-    
-    # Create figure with higher DPI for crispness
-    fig, (ax_bars, ax_matrix) = plt.subplots(2, 1, figsize=(10, 5), dpi=120,
-                                           gridspec_kw={'height_ratios': [1, 1]})
-    
-    # Top plot: intersection sizes (VERTICAL bars)
-    intersection_sizes = [len(genes) for _, genes in sorted_intersections]
-    x_pos = np.arange(len(intersection_sizes))  # Use arange for perfect positioning
-    
-    # Create vertical bars with different colors for panels vs intersections
-    bar_colors = []
-    for membership, _ in sorted_intersections:
-        if len(membership) == 1:
-            bar_colors.append('#3498db')  # Blue for individual panels
-        else:
-            bar_colors.append('#2c3e50')  # Dark for intersections
-    
-    bars = ax_bars.bar(x_pos, intersection_sizes, color=bar_colors, alpha=0.8, width=0.6,
-                       edgecolor='white', linewidth=0.5)
-    ax_bars.set_ylabel('Number of Genes', fontsize=11, fontweight='bold')
-    ax_bars.set_title('Gene Panel Intersections', fontsize=13, fontweight='bold', pad=20)
-    ax_bars.set_xticks([])
-    ax_bars.grid(True, alpha=0.3, axis='y')
-    ax_bars.spines['top'].set_visible(False)
-    ax_bars.spines['right'].set_visible(False)
-    
-    # Set x-axis limits to match matrix exactly
-    ax_bars.set_xlim(-0.5, len(sorted_intersections) - 0.5)
-    
-    # Add value labels on top of bars
-    for i, (bar, size) in enumerate(zip(bars, intersection_sizes)):
-        ax_bars.text(i, bar.get_height() + max(intersection_sizes) * 0.01, 
-                    str(size), ha='center', va='bottom', fontweight='bold', fontsize=9)
-    
-    # Bottom plot: binary matrix with precise alignment
-    matrix_data = np.zeros((len(sets_list), len(sorted_intersections)))
-    for j, (membership, _) in enumerate(sorted_intersections):
-        for i in membership:
-            matrix_data[i, j] = 1
-    
-    # Clear the matrix plot
-    ax_matrix.clear()
-    
-    # Set up the matrix plot with EXACT alignment to bars
-    ax_matrix.set_xlim(-0.5, len(sorted_intersections) - 0.5)
-    ax_matrix.set_ylim(-0.5, len(sets_list) - 0.5)
-    
-    # Draw the matrix with perfect circles aligned with bars
-    circle_radius = 0.1 # Precise circles
-    for i in range(len(sets_list)):
-        for j in range(len(sorted_intersections)):
-            # Use EXACT same x positioning as bars: j (which matches x_pos[j])
-            x_center = float(j)  # Ensure float for perfect alignment
-            y_center = float(i)
-            
-            if matrix_data[i, j] == 1:
-                # Draw filled circle (black) - perfectly round
-                circle = plt.Circle((x_center, y_center), circle_radius, 
-                                  color='black', zorder=2, clip_on=False)
-                ax_matrix.add_patch(circle)
-            else:
-                # Draw empty circle (light gray) - smaller and subtle
-                circle = plt.Circle((x_center, y_center), circle_radius, 
-                                  fill=False, color='lightgray', 
-                                  linewidth=1, alpha=0.4, zorder=2, clip_on=False)
-                ax_matrix.add_patch(circle)
-    
-    # Connect dots vertically for each intersection with crisp lines
-    for j in range(len(sorted_intersections)):
-        connected = [k for k in range(len(sets_list)) if matrix_data[k, j] == 1]
-        if len(connected) > 1:
-            min_y, max_y = min(connected), max(connected)
-            x_line = float(j)  # Use same x positioning
-            ax_matrix.plot([x_line, x_line], [min_y, max_y], 'k-', linewidth=2.5, 
-                          alpha=1.0, zorder=2, solid_capstyle='round')
-    
-    # Extract origin and ID for display names WITH sizes
-    display_names = []
-    for name in sets_list:
-        set_size = len(gene_sets[name])
-        
-        if name == "Manual":
-            display_names.append(f"Manual ({set_size})")
-        elif name.startswith("UK_"):
-            panel_id = name.replace("UK_", "")
-            display_names.append(f"UK_{panel_id} ({set_size})")
-        elif name.startswith("AUS_"):
-            panel_id = name.replace("AUS_", "")
-            display_names.append(f"AUS_{panel_id} ({set_size})")
-        elif name.startswith("INT-"):
-            panel_id = name.replace("INT-", "")
-            display_names.append(f"INT_{panel_id} ({set_size})")
-        else:
-            display_names.append(f"{name} ({set_size})")
-    
-    # Set up y-axis with panel names INCLUDING sizes
-    ax_matrix.set_yticks(range(len(sets_list)))
-    ax_matrix.set_yticklabels(display_names, fontsize=10,)
-    ax_matrix.set_xticks([])
-    
-    # Remove the xlabel
-    ax_matrix.set_xlabel('')
-    
-    # Remove grid and spines for cleaner look
-    ax_matrix.grid(False)
-    ax_matrix.spines['top'].set_visible(False)
-    ax_matrix.spines['right'].set_visible(False)
-    ax_matrix.spines['bottom'].set_visible(False)
-    ax_matrix.spines['left'].set_visible(False)
-    
-    # Invert y-axis to match the order of bars above
-    ax_matrix.invert_yaxis()
-    
-    # Add a visual separator and better labels
-    separator_pos = -1
-    for j, (membership, _) in enumerate(sorted_intersections):
-        if len(membership) > 1:
-            separator_pos = j - 0.5
-            break
-    
-    # Adjust layout with tighter spacing
-    plt.tight_layout(pad=1.5)
-    
-    # Set clean background
-    ax_matrix.set_facecolor('white')
-    ax_bars.set_facecolor('white')
-    
-    return fig
+	"""Create an UpSet plot for visualizing intersections of multiple sets with dynamic sizing"""
+	from itertools import combinations, chain
+	
+	# Prepare data for UpSet plot
+	all_genes = set()
+	for genes in gene_sets.values():
+		all_genes.update(genes)
+	
+	if not all_genes:
+		return None
+	
+	# For each gene, find which sets it belongs to
+	gene_memberships = {}
+	sets_list = list(gene_sets.keys())
+	
+	for gene in all_genes:
+		membership = tuple(i for i, (name, genes) in enumerate(gene_sets.items()) if gene in genes)
+		if membership not in gene_memberships:
+			gene_memberships[membership] = []
+		gene_memberships[membership].append(gene)
+	
+	# Sort intersections: single sets first (panels), then multi-set intersections
+	single_sets = []  # Individual panels
+	multi_sets = []   # Intersections between panels
+	
+	for membership, genes in gene_memberships.items():
+		if len(membership) == 1:
+			# Single panel
+			single_sets.append((membership, genes))
+		else:
+			# Multi-panel intersection
+			multi_sets.append((membership, genes))
+	
+	# Sort single sets by size (largest first)
+	single_sets.sort(key=lambda x: len(x[1]), reverse=True)
+	
+	# Sort multi-set intersections by size (largest first)
+	multi_sets.sort(key=lambda x: len(x[1]), reverse=True)
+	
+	# Combine: panels first, then intersections (limit to max 15 total)
+	sorted_intersections = single_sets + multi_sets
+	max_intersections = min(15, len(sorted_intersections))
+	sorted_intersections = sorted_intersections[:max_intersections]
+	
+	# DYNAMIC WIDTH SIZING BASED ON NUMBER OF INTERSECTIONS (FIXED HEIGHT)
+	num_intersections = len(sorted_intersections)
+	num_sets = len(sets_list)
+	figure_height = 5
+	dpi = 180
+
+	if num_intersections <= 6:
+		figure_width = 6.5  # Compact for simple plots
+	elif num_intersections <= 10:
+		figure_width = 8.5  # Medium width
+	else:
+		figure_width = 10  # Max width cap
+
+	
+	# Create figure with dynamic width, fixed height
+	fig, (ax_bars, ax_matrix) = plt.subplots(2, 1, figsize=(figure_width, figure_height), dpi=dpi,
+										gridspec_kw={'height_ratios': [1, 1]})
+	
+	# Dynamic bar width: better utilization of space
+	if num_intersections <= 6:
+		bar_width = 0.8  # Wider bars for fewer intersections
+	elif num_intersections <= 10:
+		bar_width = 0.7  # Medium width
+	else:
+		bar_width = 0.6  # Narrower for many intersections
+	
+	# Top plot: intersection sizes (VERTICAL bars)
+	intersection_sizes = [len(genes) for _, genes in sorted_intersections]
+	x_pos = np.arange(len(intersection_sizes))
+	
+	# Create vertical bars with different colors for panels vs intersections
+	bar_colors = []
+	for membership, _ in sorted_intersections:
+		if len(membership) == 1:
+			bar_colors.append('#3498db')  # Blue for individual panels
+		else:
+			bar_colors.append('#2c3e50')  # Dark for intersections
+	
+	bars = ax_bars.bar(x_pos, intersection_sizes, color=bar_colors, alpha=0.8, width=bar_width,
+					edgecolor='white', linewidth=1)
+	
+	# Dynamic font sizes optimized for 3 categories
+	if num_intersections <= 6:
+		title_fontsize = 14
+		label_fontsize = 12  
+		value_fontsize = 10
+		ytick_fontsize = 10
+	elif num_intersections <= 10:
+		title_fontsize = 13
+		label_fontsize = 11
+		value_fontsize = 9
+		ytick_fontsize = 9
+	else:
+		title_fontsize = 12
+		label_fontsize = 10
+		value_fontsize = 8
+		ytick_fontsize = 8
+	
+	ax_bars.set_ylabel('Number of Genes', fontsize=label_fontsize, fontweight='bold')
+	ax_bars.set_title('Gene Panel Intersections', fontsize=title_fontsize, fontweight='bold', pad=20)
+	ax_bars.set_xticks([])
+	ax_bars.grid(True, alpha=0.3, axis='y')
+	ax_bars.spines['top'].set_visible(False)
+	ax_bars.spines['right'].set_visible(False)
+	
+	# Set x-axis limits to match matrix exactly
+	ax_bars.set_xlim(-0.5, len(sorted_intersections) - 0.5)
+	
+	# Add value labels on top of bars with dynamic positioning
+	max_height = max(intersection_sizes) if intersection_sizes else 1
+	for i, (bar, size) in enumerate(zip(bars, intersection_sizes)):
+		ax_bars.text(i, bar.get_height() + max_height * 0.01, 
+					str(size), ha='center', va='bottom', fontweight='bold', 
+					fontsize=value_fontsize)
+	
+	# Bottom plot: binary matrix with dynamic sizing
+	matrix_data = np.zeros((len(sets_list), len(sorted_intersections)))
+	for j, (membership, _) in enumerate(sorted_intersections):
+		for i in membership:
+			matrix_data[i, j] = 1
+	
+	# Clear the matrix plot
+	ax_matrix.clear()
+	
+	# Set up the matrix plot with EXACT alignment to bars
+	ax_matrix.set_xlim(-0.5, len(sorted_intersections) - 0.5)
+	ax_matrix.set_ylim(-0.5, len(sets_list) - 0.5)
+	
+
+	circle_radius = 0.1
+	line_width = 2.0
+	
+	# Draw the matrix with dynamic circles aligned with bars
+	for i in range(len(sets_list)):
+		for j in range(len(sorted_intersections)):
+			x_center = float(j)
+			y_center = float(i)
+			
+			if matrix_data[i, j] == 1:
+				# Draw filled circle (black) - dynamically sized
+				circle = plt.Circle((x_center, y_center), circle_radius, 
+								color='black', zorder=2, clip_on=False)
+				ax_matrix.add_patch(circle)
+			else:
+				# Draw empty circle (light gray) - smaller and subtle  
+				empty_radius = circle_radius * 0.8  # Smaller ratio for better contrast
+				circle = plt.Circle((x_center, y_center), empty_radius, 
+								fill=False, color='lightgray', 
+								linewidth=0.8, alpha=0.5, zorder=2, clip_on=False)
+				ax_matrix.add_patch(circle)
+	
+	# Connect dots vertically for each intersection with dynamic lines
+	for j in range(len(sorted_intersections)):
+		connected = [k for k in range(len(sets_list)) if matrix_data[k, j] == 1]
+		if len(connected) > 1:
+			min_y, max_y = min(connected), max(connected)
+			x_line = float(j)
+			ax_matrix.plot([x_line, x_line], [min_y, max_y], 'k-', linewidth=line_width, 
+						alpha=0.95, zorder=1, solid_capstyle='round')
+	
+	# Extract origin and ID for display names WITH sizes
+	display_names = []
+	for name in sets_list:
+		set_size = len(gene_sets[name])
+		
+		if name == "Manual":
+			display_names.append(f"Manual ({set_size})")
+		elif name.startswith("UK_"):
+			panel_id = name.replace("UK_", "")
+			display_names.append(f"UK_{panel_id} ({set_size})")
+		elif name.startswith("AUS_"):
+			panel_id = name.replace("AUS_", "")
+			display_names.append(f"AUS_{panel_id} ({set_size})")
+		elif name.startswith("INT-"):
+			panel_id = name.replace("INT-", "")
+			display_names.append(f"INT_{panel_id} ({set_size})")
+		else:
+			display_names.append(f"{name} ({set_size})")
+	
+	# Set up y-axis with panel names INCLUDING sizes
+	ax_matrix.set_yticks(range(len(sets_list)))
+	ax_matrix.set_yticklabels(display_names, fontsize=ytick_fontsize)
+	ax_matrix.set_xticks([])
+	
+	# Remove the xlabel
+	ax_matrix.set_xlabel('')
+	
+	# Remove grid and spines for cleaner look
+	ax_matrix.grid(False)
+	for spine in ax_matrix.spines.values():
+		spine.set_visible(False)
+	
+	# Invert y-axis to match the order of bars above
+	ax_matrix.invert_yaxis()
+	
+	# Optimized padding for 3 categories
+	if num_intersections <= 10:
+		pad = 1.8
+	else:
+		pad = 1.2
+	
+	plt.tight_layout(pad=pad)
+	
+	# Set clean background
+	ax_matrix.set_facecolor('white')
+	ax_bars.set_facecolor('white')
+	fig.patch.set_facecolor('white')
+	
+	return fig
 
 def create_hpo_terms_table(hpo_details):
 	if not hpo_details:
@@ -483,7 +663,7 @@ def create_hpo_terms_table(hpo_details):
 		})
 	
 	return html.Div([
-		html.H5(f"Selected HPO Terms ({len(hpo_details)})", className="mb-3", style={"textAlign": "center", "fontSize": "16px"}),
+		html.H5(f"HPO Terms ({len(hpo_details)})", className="mb-3", style={"textAlign": "center", "fontSize": "16px"}),
 		dash_table.DataTable(
 			columns=[
 				{"name": "HPO ID", "id": "HPO ID"},
@@ -587,8 +767,8 @@ def create_sidebar():
 panels_uk_df = fetch_panels(PANELAPP_UK_BASE)
 panels_au_df = fetch_panels(PANELAPP_AU_BASE)
 
-internal_df = pd.read_csv("data/internal_panels.csv")
-internal_panels = internal_df[["panel_id", "panel_name"]].drop_duplicates()
+# Load internal panels from .txt files
+internal_df, internal_panels = load_internal_panels_from_files()
 
 # =============================================================================
 # DASH APP INITIALIZATION
@@ -1113,11 +1293,12 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	if selected_uk_ids:
 		for pid in selected_uk_ids:
 			df, panel_info = fetch_panel_genes(PANELAPP_UK_BASE, pid)
-			df["confidence_level"] = df["confidence_level"].astype(int)
+			df = df.copy()  # Ensure we have a copy
+			df.loc[:, "confidence_level"] = df["confidence_level"].astype(int)
 			
 			panel_dataframes[f"UK_{pid}"] = df.copy()
 			
-			df_filtered = df[df["confidence_level"].isin(selected_confidences)]
+			df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
 			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
 			gene_sets[f"UK_{pid}"] = set(df_filtered["gene_symbol"])
 			
@@ -1135,11 +1316,12 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	if selected_au_ids:
 		for pid in selected_au_ids:
 			df, panel_info = fetch_panel_genes(PANELAPP_AU_BASE, pid)
-			df["confidence_level"] = df["confidence_level"].astype(int)
+			df = df.copy()  # Ensure we have a copy
+			df.loc[:, "confidence_level"] = df["confidence_level"].astype(int)
 			
 			panel_dataframes[f"AUS_{pid}"] = df.copy()
 			
-			df_filtered = df[df["confidence_level"].isin(selected_confidences)]
+			df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
 			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
 			gene_sets[f"AUS_{pid}"] = set(df_filtered["gene_symbol"])
 			
@@ -1156,8 +1338,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 
 	if selected_internal_ids:
 		for pid in selected_internal_ids:
-			panel_df = internal_df[internal_df["panel_id"] == pid]
-			panel_df["confidence_level"] = panel_df["confidence_level"].astype(int)
+			panel_df = internal_df[internal_df["panel_id"] == pid].copy()
+			panel_df.loc[:, "confidence_level"] = panel_df["confidence_level"].astype(int)
 			
 			panel_dataframes[f"INT-{pid}"] = panel_df.copy()
 			
@@ -1167,7 +1349,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			
 			panel_name = next((row['panel_name'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), f"Internal Panel {pid}")
 			panel_names[f"INT-{pid}"] = panel_name
-			panel_versions[f"INT-{pid}"] = None 
+			panel_version = next((row['version'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), None)
+			panel_versions[f"INT-{pid}"] = panel_version
 
 	if manual_genes:
 		manual_genes_list = [g.strip() for g in manual_genes.strip().splitlines() if g.strip()]
@@ -1183,7 +1366,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options, "", ""
 
 	df_all = pd.concat(genes_combined)
-	df_all["confidence_level"] = df_all["confidence_level"].astype(int)
+	df_all = df_all.copy()  # Ensure we have a copy
+	df_all.loc[:, "confidence_level"] = df_all["confidence_level"].astype(int)
 	df_conf_max = df_all.groupby("gene_symbol", as_index=False)["confidence_level"].max()
 	df_merged = df_all.merge(df_conf_max, on=["gene_symbol", "confidence_level"], how="inner")
 	df_unique = df_merged.drop_duplicates(subset="gene_symbol", keep="first")
@@ -1199,103 +1383,87 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 
 	# NEW VISUALIZATION LOGIC WITH UPSET PLOT AND FIXED VENN LABELS
 	venn_component = html.Div()
-	
-	# Remove empty sets and manual genes for counting active panels
-	active_panels = {k: v for k, v in gene_sets.items() if k != "Manual" and len(v) > 0}
-	manual_genes_present = "Manual" in gene_sets and len(gene_sets["Manual"]) > 0
-	
-	total_active = len(active_panels)
-	
-	# Case 1: Only manual genes
-	if total_active == 0 and manual_genes_present:
-		single_panel_id = "Manual"
+
+	# Count ALL non-empty sets (including manual) for consistent decision making
+	all_sets = {k: v for k, v in gene_sets.items() if len(v) > 0}
+	total_sets = len(all_sets)
+
+	# Case 1: Only one set total (could be any type including manual)
+	if total_sets == 1:
+		single_panel_id = next(iter(all_sets.keys()))
 		panel_df = panel_dataframes[single_panel_id]
 		panel_name = panel_names[single_panel_id]
 		panel_version = panel_versions[single_panel_id]
 		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
-	
-	# Case 2: Only one active panel (with or without manual)
-	elif total_active == 1:
-		single_panel_id = next(iter(active_panels.keys()))
-		panel_df = panel_dataframes[single_panel_id]
-		panel_name = panel_names[single_panel_id]
-		panel_version = panel_versions[single_panel_id]
-		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
-	
-	# Case 3: 2-3 panels - use traditional Venn diagram with FIXED LABELS
-	elif 2 <= total_active <= 3:
-		# Include manual genes if present for Venn
-		venn_sets = active_panels.copy()
-		if manual_genes_present:
-			venn_sets["Manual"] = gene_sets["Manual"]
+
+	# Case 2: 2-3 sets total - use traditional Venn diagram
+	elif 2 <= total_sets <= 3:
+		# Use all non-empty sets for Venn (already limited to 2-3)
+		venn_sets = all_sets
 		
-		valid_sets = [s for s in venn_sets.values() if len(s) > 0]
-		if 2 <= len(valid_sets) <= 3:
-			set_items = list(venn_sets.items())[:3]
+		set_items = list(venn_sets.items())
+		
+		# Create labels using panel IDs instead of full names
+		labels = []
+		for panel_key, _ in set_items:
+			if panel_key == "Manual":
+				labels.append("Manual")
+			elif panel_key.startswith("UK_"):
+				panel_id = panel_key.replace("UK_", "")
+				labels.append(f"UK_{panel_id}")
+			elif panel_key.startswith("AUS_"):
+				panel_id = panel_key.replace("AUS_", "")
+				labels.append(f"AUS_{panel_id}")
+			elif panel_key.startswith("INT-"):
+				panel_id = panel_key.replace("INT-", "")
+				labels.append(f"INT_{panel_id}")
+			else:
+				labels.append(panel_key)
+		
+		sets = [s[1] for s in set_items]
+		
+		fig, ax = plt.subplots(figsize=(9, 5))
+		try:
+			if len(sets) == 2:
+				venn2(sets, set_labels=labels)
+			elif len(sets) == 3:
+				venn3(sets, set_labels=labels)
 			
-			# MODIFIED: Use panel IDs instead of full names for labels
-			labels = []
-			for panel_key, _ in set_items:
-				if panel_key == "Manual":
-					labels.append("Manual")
-				elif panel_key.startswith("UK_"):
-					panel_id = panel_key.replace("UK_", "")
-					labels.append(f"UK_{panel_id}")
-				elif panel_key.startswith("AUS_"):
-					panel_id = panel_key.replace("AUS_", "")
-					labels.append(f"AUS_{panel_id}")
-				elif panel_key.startswith("INT-"):
-					panel_id = panel_key.replace("INT-", "")
-					labels.append(f"INT_{panel_id}")
-				else:
-					labels.append(panel_key)
+			buf = io.BytesIO()
+			plt.tight_layout()
+			plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
+			plt.close(fig)
+			data = base64.b64encode(buf.getbuffer()).decode("ascii")
 			
-			sets = [s[1] for s in set_items]
-			
-			fig, ax = plt.subplots(figsize=(9, 5))
-			try:
-				if len(sets) == 2:
-					venn2(sets, set_labels=labels)
-				elif len(sets) == 3:
-					venn3(sets, set_labels=labels)
-				
-				buf = io.BytesIO()
-				plt.tight_layout()
-				plt.savefig(buf, format="png", bbox_inches='tight', dpi=100)
-				plt.close(fig)
-				data = base64.b64encode(buf.getbuffer()).decode("ascii")
-				
-				venn_component = html.Div([
-					html.Img(src=f"data:image/png;base64,{data}", 
-							style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
-				], style={
-					"border": "1px solid #999", 
-					"padding": "10px", 
-					"borderRadius": "8px", 
-					"maxWidth": "100%", 
-					"margin": "0",
-					"height": "580px",  
-					"display": "flex",
-					"alignItems": "center",
-					"justifyContent": "center"
-				})
-			except Exception as e:
-				venn_component = html.Div(f"Could not generate Venn diagram: {str(e)}", style={
-					"textAlign": "center", 
-					"fontStyle": "italic", 
-					"color": "#666",
-					"height": "580px",
-					"display": "flex",
-					"alignItems": "center",
-					"justifyContent": "center"
-				})
-	
-	# Case 4: 4+ panels - use UpSet plot
-	elif total_active >= 4:
-		# Include manual genes if present
-		upset_sets = active_panels.copy()
-		if manual_genes_present:
-			upset_sets["Manual"] = gene_sets["Manual"]
+			venn_component = html.Div([
+				html.Img(src=f"data:image/png;base64,{data}", 
+						style={"maxWidth": "100%", "height": "auto", "display": "block", "margin": "auto"})
+			], style={
+				"border": "1px solid #999", 
+				"padding": "10px", 
+				"borderRadius": "8px", 
+				"maxWidth": "100%", 
+				"margin": "0",
+				"height": "580px",  
+				"display": "flex",
+				"alignItems": "center",
+				"justifyContent": "center"
+			})
+		except Exception as e:
+			venn_component = html.Div(f"Could not generate Venn diagram: {str(e)}", style={
+				"textAlign": "center", 
+				"fontStyle": "italic", 
+				"color": "#666",
+				"height": "580px",
+				"display": "flex",
+				"alignItems": "center",
+				"justifyContent": "center"
+			})
+
+	# Case 3: 4+ sets total - use UpSet plot
+	elif total_sets >= 4:
+		# Use all non-empty sets for UpSet
+		upset_sets = all_sets
 		
 		try:
 			fig = create_upset_plot(upset_sets, panel_names)
@@ -1340,7 +1508,7 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				"alignItems": "center",
 				"justifyContent": "center"
 			})
-	
+
 	else:
 		venn_component = html.Div("No panels selected.", style={
 			"textAlign": "center", 
@@ -1533,8 +1701,8 @@ app.clientside_callback(
 # APP RUN
 # =============================================================================
 
-#if __name__ == "__main__":
-#	app.run(debug=True)
+# if __name__ == "__main__":
+# 	app.run(debug=True)
 
 if __name__ == '__main__':
 	port = int(os.environ.get("PORT", 8050))
