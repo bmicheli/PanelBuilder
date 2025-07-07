@@ -196,14 +196,52 @@ def load_internal_panels_from_files(directory_path="data/internal_panels"):
 	internal_df = pd.DataFrame(internal_data)
 	internal_panels = pd.DataFrame(panel_info).sort_values('panel_id')  # Sort by ID for display
 	
-	# print(f"Loaded {len(internal_panels)} internal panels with {len(internal_df)} total genes")
-	# print("Panel IDs assigned (stable across versions, won't change when adding new panels):")
-	for _, panel in internal_panels.iterrows():
-		panel_name_for_id = panel['panel_name']  # This is what the ID is based on
-		# print(f"  ID {panel['panel_id']}: {panel['file_name']} ({panel['gene_count']} genes) [ID based on: {panel_name_for_id}]")
-	
 	return internal_df, internal_panels
 
+# =============================================================================
+# UTILITY FUNCTIONS - CONFIDENCE LEVEL PROCESSING
+# =============================================================================
+
+def clean_confidence_level(df):
+	"""Clean and standardize confidence level values"""
+	if 'confidence_level' not in df.columns:
+		return df
+	
+	df = df.copy()
+	
+	# Convert confidence levels to standardized numeric values
+	def convert_confidence(val):
+		if pd.isna(val) or val == '' or val is None:
+			return 0
+		
+		# Convert to string first to handle various input types
+		val_str = str(val).strip().lower()
+		
+		# Handle numeric values
+		if val_str in ['3', '3.0']:
+			return 3
+		elif val_str in ['2', '2.0']:
+			return 2
+		elif val_str in ['1', '1.0']:
+			return 1
+		elif val_str in ['0', '0.0']:
+			return 0
+		
+		# Handle text values
+		elif 'green' in val_str or val_str == 'high':
+			return 3
+		elif 'amber' in val_str or 'orange' in val_str or val_str == 'medium':
+			return 2
+		elif 'red' in val_str or val_str == 'low':
+			return 1
+		
+		# Default for unknown values
+		else:
+			print(f"Warning: Unknown confidence level '{val}', defaulting to 0")
+			return 0
+	
+	df['confidence_level'] = df['confidence_level'].apply(convert_confidence)
+	return df
 
 # =============================================================================
 # UTILITY FUNCTIONS - HPO MANAGEMENT
@@ -908,6 +946,7 @@ app.layout = dbc.Container([
 	),
 
 	dcc.Store(id="gene-list-store"),
+	dcc.Store(id="gene-data-store"),
 	html.Hr(),
 	html.Div(
 		id="generate-code-section",
@@ -1266,6 +1305,7 @@ def handle_reset_or_import(n_reset, n_import, code):
 	Output("hpo-search-dropdown", "options", allow_duplicate=True),
 	Output("generated-code-output", "value", allow_duplicate=True),
 	Output("panel-summary-output", "value", allow_duplicate=True), 
+	Output("gene-data-store", "data", allow_duplicate=True),
 	Input("load-genes-btn", "n_clicks"),
 	State("dropdown-uk", "value"),
 	State("dropdown-au", "value"),
@@ -1278,7 +1318,7 @@ def handle_reset_or_import(n_reset, n_import, code):
 )
 def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_internal_ids, selected_confidences, manual_genes, selected_hpo_terms, current_hpo_options):
 	if not n_clicks:
-		return "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], [], [], "", ""
+		return "", "", "", "", {"display": "none"}, "", {"display": "none"}, [], [], [], "", "", {}
 
 	# Use only the selected HPO terms, don't auto-add more
 	all_hpo_terms = selected_hpo_terms or []
@@ -1293,70 +1333,119 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 
 	if selected_uk_ids:
 		for pid in selected_uk_ids:
-			df, panel_info = fetch_panel_genes(PANELAPP_UK_BASE, pid)
-			df = df.copy()  # Ensure we have a copy
-			df.loc[:, "confidence_level"] = df["confidence_level"].astype(int)
-			
-			panel_dataframes[f"UK_{pid}"] = df.copy()
-			
-			df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
-			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
-			gene_sets[f"UK_{pid}"] = set(df_filtered["gene_symbol"])
-			
-			panel_name = f"UK Panel {pid}"
-			panel_version = None
-			if panel_info:
-				if 'name' in panel_info:
-					panel_name = panel_info['name']
-				if 'version' in panel_info:
-					panel_version = panel_info['version']
-			
-			panel_names[f"UK_{pid}"] = panel_name
-			panel_versions[f"UK_{pid}"] = panel_version
+			try:
+				df, panel_info = fetch_panel_genes(PANELAPP_UK_BASE, pid)
+				df = df.copy()  # Ensure we have a copy
+				
+				# Clean confidence levels
+				df = clean_confidence_level(df)
+				
+				panel_dataframes[f"UK_{pid}"] = df.copy()
+				
+				df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
+				# Ensure all required columns exist with default values
+				required_cols = ["gene_symbol", "confidence_level", "omim_id", "hgnc_id", "entity_type", "biotype", "mode_of_inheritance"]
+				for col in required_cols:
+					if col not in df_filtered.columns:
+						df_filtered[col] = "" if col != "confidence_level" else 0
+				
+				genes_combined.append(df_filtered[required_cols])
+				gene_sets[f"UK_{pid}"] = set(df_filtered["gene_symbol"])
+				
+				panel_name = f"UK Panel {pid}"
+				panel_version = None
+				if panel_info:
+					if 'name' in panel_info:
+						panel_name = panel_info['name']
+					if 'version' in panel_info:
+						panel_version = panel_info['version']
+				
+				panel_names[f"UK_{pid}"] = panel_name
+				panel_versions[f"UK_{pid}"] = panel_version
+				
+			except Exception as e:
+				print(f"Error processing UK panel {pid}: {e}")
+				continue
 
 	if selected_au_ids:
 		for pid in selected_au_ids:
-			df, panel_info = fetch_panel_genes(PANELAPP_AU_BASE, pid)
-			df = df.copy()  # Ensure we have a copy
-			df.loc[:, "confidence_level"] = df["confidence_level"].astype(int)
-			
-			panel_dataframes[f"AUS_{pid}"] = df.copy()
-			
-			df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
-			genes_combined.append(df_filtered[["gene_symbol", "confidence_level"]])
-			gene_sets[f"AUS_{pid}"] = set(df_filtered["gene_symbol"])
-			
-			panel_name = f"AUS Panel {pid}"
-			panel_version = None
-			if panel_info:
-				if 'name' in panel_info:
-					panel_name = panel_info['name']
-				if 'version' in panel_info:
-					panel_version = panel_info['version']
-			
-			panel_names[f"AUS_{pid}"] = panel_name
-			panel_versions[f"AUS_{pid}"] = panel_version
+			try:
+				df, panel_info = fetch_panel_genes(PANELAPP_AU_BASE, pid)
+				df = df.copy()  # Ensure we have a copy
+				
+				# Clean confidence levels
+				df = clean_confidence_level(df)
+				
+				panel_dataframes[f"AUS_{pid}"] = df.copy()
+				
+				df_filtered = df[df["confidence_level"].isin(selected_confidences)].copy()
+				# Ensure all required columns exist with default values
+				required_cols = ["gene_symbol", "confidence_level", "omim_id", "hgnc_id", "entity_type", "biotype", "mode_of_inheritance"]
+				for col in required_cols:
+					if col not in df_filtered.columns:
+						df_filtered[col] = "" if col != "confidence_level" else 0
+				
+				genes_combined.append(df_filtered[required_cols])
+				gene_sets[f"AUS_{pid}"] = set(df_filtered["gene_symbol"])
+				
+				panel_name = f"AUS Panel {pid}"
+				panel_version = None
+				if panel_info:
+					if 'name' in panel_info:
+						panel_name = panel_info['name']
+					if 'version' in panel_info:
+						panel_version = panel_info['version']
+				
+				panel_names[f"AUS_{pid}"] = panel_name
+				panel_versions[f"AUS_{pid}"] = panel_version
+				
+			except Exception as e:
+				print(f"Error processing AUS panel {pid}: {e}")
+				continue
 
 	if selected_internal_ids:
 		for pid in selected_internal_ids:
-			panel_df = internal_df[internal_df["panel_id"] == pid].copy()
-			panel_df.loc[:, "confidence_level"] = panel_df["confidence_level"].astype(int)
-			
-			panel_dataframes[f"INT-{pid}"] = panel_df.copy()
-			
-			panel_df_filtered = panel_df[panel_df["confidence_level"].isin(selected_confidences)].copy()
-			genes_combined.append(panel_df_filtered[["gene_symbol", "confidence_level"]])
-			gene_sets[f"INT-{pid}"] = set(panel_df_filtered["gene_symbol"])
-			
-			panel_name = next((row['panel_name'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), f"Internal Panel {pid}")
-			panel_names[f"INT-{pid}"] = panel_name
-			panel_version = next((row['version'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), None)
-			panel_versions[f"INT-{pid}"] = panel_version
+			try:
+				panel_df = internal_df[internal_df["panel_id"] == pid].copy()
+				
+				# Clean confidence levels
+				panel_df = clean_confidence_level(panel_df)
+				
+				# Add missing columns for internal panels with default values
+				panel_df["omim_id"] = ""
+				panel_df["hgnc_id"] = ""
+				panel_df["entity_type"] = "gene"
+				panel_df["biotype"] = "unknown"
+				panel_df["mode_of_inheritance"] = "unknown"
+				
+				panel_dataframes[f"INT-{pid}"] = panel_df.copy()
+				
+				panel_df_filtered = panel_df[panel_df["confidence_level"].isin(selected_confidences)].copy()
+				required_cols = ["gene_symbol", "confidence_level", "omim_id", "hgnc_id", "entity_type", "biotype", "mode_of_inheritance"]
+				genes_combined.append(panel_df_filtered[required_cols])
+				gene_sets[f"INT-{pid}"] = set(panel_df_filtered["gene_symbol"])
+				
+				panel_name = next((row['panel_name'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), f"Internal Panel {pid}")
+				panel_names[f"INT-{pid}"] = panel_name
+				panel_version = next((row['version'] for _, row in internal_panels.iterrows() if row['panel_id'] == pid), None)
+				panel_versions[f"INT-{pid}"] = panel_version
+				
+			except Exception as e:
+				print(f"Error processing internal panel {pid}: {e}")
+				continue
 
 	if manual_genes:
 		manual_genes_list = [g.strip() for g in manual_genes.strip().splitlines() if g.strip()]
 		if manual_genes_list:  
-			manual_df = pd.DataFrame({"gene_symbol": manual_genes_list, "confidence_level": [0] * len(manual_genes_list)})
+			manual_df = pd.DataFrame({
+				"gene_symbol": manual_genes_list, 
+				"confidence_level": [0] * len(manual_genes_list),
+				"omim_id": [""] * len(manual_genes_list),
+				"hgnc_id": [""] * len(manual_genes_list),
+				"entity_type": ["gene"] * len(manual_genes_list),
+				"biotype": ["manual"] * len(manual_genes_list),
+				"mode_of_inheritance": ["manual"] * len(manual_genes_list)
+			})
 			genes_combined.append(manual_df)
 			gene_sets["Manual"] = set(manual_genes_list)
 			panel_dataframes["Manual"] = manual_df
@@ -1364,47 +1453,65 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			panel_versions["Manual"] = None
 
 	if not genes_combined:
-		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options, "", ""
+		return "No gene found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options, "", "", {}
 
-	df_all = pd.concat(genes_combined)
-	df_all = df_all.copy()  # Ensure we have a copy
-	df_all.loc[:, "confidence_level"] = df_all["confidence_level"].astype(int)
-	df_conf_max = df_all.groupby("gene_symbol", as_index=False)["confidence_level"].max()
-	df_merged = df_all.merge(df_conf_max, on=["gene_symbol", "confidence_level"], how="inner")
-	df_unique = df_merged.drop_duplicates(subset="gene_symbol", keep="first")
-	df_unique = df_unique.sort_values(by=["confidence_level", "gene_symbol"], ascending=[False, True])
-	df_unique = df_unique.rename(columns={"gene_symbol": "Gene symbol", "confidence_level": "Confidence level"})
+	# Combine all gene data
+	df_all = pd.concat(genes_combined, ignore_index=True)
+	df_all = df_all.copy()
+	
+	# Ensure confidence_level is numeric
+	df_all["confidence_level"] = pd.to_numeric(df_all["confidence_level"], errors='coerce').fillna(0).astype(int)
+	
+	# Remove any rows with completely missing gene symbols
+	df_all = df_all[df_all["gene_symbol"].notna() & (df_all["gene_symbol"] != "")]
+	
+	if df_all.empty:
+		return "No valid genes found.", "", "", "", {"display": "none"}, "", {"display": "none"}, [], all_hpo_terms, updated_hpo_options, "", "", {}
+	
+	# Group by gene_symbol and take the row with maximum confidence level
+	try:
+		# Sort by confidence level descending to ensure highest confidence is picked first
+		df_all = df_all.sort_values(['gene_symbol', 'confidence_level'], ascending=[True, False])
+		# Keep first occurrence of each gene (which will be the highest confidence)
+		df_unique = df_all.drop_duplicates(subset=['gene_symbol'], keep='first').copy()
+		df_unique = df_unique.sort_values(by=["confidence_level", "gene_symbol"], ascending=[False, True])
+	except Exception as e:
+		print(f"Error in gene deduplication: {e}")
+		# Fallback to simple deduplication
+		df_unique = df_all.drop_duplicates(subset=['gene_symbol'], keep='first').copy()
+	
+	# Rename columns for display
+	df_unique = df_unique.rename(columns={
+		"gene_symbol": "Gene Symbol",
+		"confidence_level": "Confidence",
+		"omim_id": "OMIM ID",
+		"hgnc_id": "HGNC ID", 
+		"entity_type": "Type",
+		"biotype": "Biotype",
+		"mode_of_inheritance": "Mode of Inheritance"
+	})
 
 	total_genes = pd.DataFrame({"Number of genes in panel": [df_unique.shape[0]]})
-	summary = df_unique.groupby("Confidence level").size().reset_index(name="Number of genes")
+	summary = df_unique.groupby("Confidence").size().reset_index(name="Number of genes")
 	summary_table = dbc.Row([
 		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in total_genes.columns], data=total_genes.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"marginBottom": "20px", "width": "100%"}), width=4),
-		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in ["Confidence level", "Number of genes"]], data=summary.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"width": "100%"}), width=8)
+		dbc.Col(dash_table.DataTable(columns=[{"name": col, "id": col} for col in ["Confidence", "Number of genes"]], data=summary.to_dict("records"), style_cell={"textAlign": "left"}, style_table={"width": "100%"}), width=8)
 	])
 
-	# NEW VISUALIZATION LOGIC WITH UPSET PLOT AND FIXED VENN LABELS
+	# Visualization logic (Venn diagrams/UpSet plots)
 	venn_component = html.Div()
-
-	# Count ALL non-empty sets (including manual) for consistent decision making
 	all_sets = {k: v for k, v in gene_sets.items() if len(v) > 0}
 	total_sets = len(all_sets)
 
-	# Case 1: Only one set total (could be any type including manual)
 	if total_sets == 1:
 		single_panel_id = next(iter(all_sets.keys()))
 		panel_df = panel_dataframes[single_panel_id]
 		panel_name = panel_names[single_panel_id]
 		panel_version = panel_versions[single_panel_id]
 		venn_component = generate_panel_pie_chart(panel_df, panel_name, panel_version)
-
-	# Case 2: 2-3 sets total - use traditional Venn diagram
 	elif 2 <= total_sets <= 3:
-		# Use all non-empty sets for Venn (already limited to 2-3)
 		venn_sets = all_sets
-		
 		set_items = list(venn_sets.items())
-		
-		# Create labels using panel IDs instead of full names
 		labels = []
 		for panel_key, _ in set_items:
 			if panel_key == "Manual":
@@ -1422,7 +1529,6 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				labels.append(panel_key)
 		
 		sets = [s[1] for s in set_items]
-		
 		fig, ax = plt.subplots(figsize=(9, 5))
 		try:
 			if len(sets) == 2:
@@ -1460,12 +1566,8 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				"alignItems": "center",
 				"justifyContent": "center"
 			})
-
-	# Case 3: 4+ sets total - use UpSet plot
 	elif total_sets >= 4:
-		# Use all non-empty sets for UpSet
 		upset_sets = all_sets
-		
 		try:
 			fig = create_upset_plot(upset_sets, panel_names)
 			if fig:
@@ -1509,7 +1611,6 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 				"alignItems": "center",
 				"justifyContent": "center"
 			})
-
 	else:
 		venn_component = html.Div("No panels selected.", style={
 			"textAlign": "center", 
@@ -1534,44 +1635,138 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 	if hpo_details:
 		hpo_table_component = create_hpo_terms_table(hpo_details)
 
-	confidence_levels_present = sorted(df_unique["Confidence level"].unique(), reverse=True)
-	buttons = [
-		dbc.Button(f"Gene list (confidence {level})", id={"type": "btn-confidence", "level": str(level)}, color="secondary", className="me-2", n_clicks=0)
-		for level in confidence_levels_present
+	confidence_levels_present = sorted(df_unique["Confidence"].unique(), reverse=True)
+
+	# Create buttons with proper IDs for the new callback system
+	buttons = []
+	for level in confidence_levels_present:
+		button = dbc.Button(
+			f"Gene list (confidence {level})", 
+			id={"type": "btn-confidence", "level": str(level)}, 
+			color="secondary", 
+			className="me-2", 
+			n_clicks=0
+		)
+		buttons.append(button)
+
+	# Add manual genes button if present
+	if manual_genes_list:
+		manual_button = dbc.Button(
+			"Manual Genes", 
+			id={"type": "btn-confidence", "level": "Manual"}, 
+			color="secondary", 
+			className="me-2", 
+			n_clicks=0
+		)
+		buttons.append(manual_button)
+
+	# Define enhanced table columns
+	table_columns = [
+		{"name": "Gene Symbol", "id": "Gene Symbol", "type": "text"},
+		{"name": "OMIM ID", "id": "OMIM ID", "type": "text", "presentation": "markdown"},
+		{"name": "HGNC ID", "id": "HGNC ID", "type": "text", "presentation": "markdown"},
+		{"name": "Type", "id": "Type", "type": "text"},
+		{"name": "Biotype", "id": "Biotype", "type": "text"},
+		{"name": "Mode of Inheritance", "id": "Mode of Inheritance", "type": "text"},
+		{"name": "Confidence", "id": "Confidence", "type": "numeric"}
 	]
 
 	tables_by_level = {
 		str(level): dash_table.DataTable(
-			columns=[{"name": col, "id": col} for col in ["Gene symbol", "Confidence level"]],
-			data=df_unique[df_unique["Confidence level"] == level].to_dict("records"),
+			columns=table_columns,
+			data=df_unique[df_unique["Confidence"] == level].to_dict("records"),
 			style_table={"overflowX": "auto", "maxHeight": "400px", "overflowY": "auto"},
-			style_cell={"textAlign": "left", "padding": "4px"},
-			style_header={"fontWeight": "bold"},
+			style_cell={
+				"textAlign": "left", 
+				"padding": "6px",
+				"fontSize": "11px",
+				"fontFamily": "Arial, sans-serif",
+				"whiteSpace": "normal",
+				"height": "auto"
+			},
+			style_header={
+				"fontWeight": "bold",
+				"backgroundColor": "#f8f9fa",
+				"border": "1px solid #ddd",
+				"fontSize": "12px"
+			},
 			style_data_conditional=[
-				{"if": {"filter_query": "{Confidence level} = 3", "column_id": "Confidence level"}, "backgroundColor": "#d4edda"},
-				{"if": {"filter_query": "{Confidence level} = 2", "column_id": "Confidence level"}, "backgroundColor": "#fff3cd"},
-				{"if": {"filter_query": "{Confidence level} = 1", "column_id": "Confidence level"}, "backgroundColor": "#f8d7da"},
-				{"if": {"filter_query": "{Confidence level} = 0", "column_id": "Confidence level"}, "backgroundColor": "#d1ecf1"},
+				{"if": {"filter_query": "{Confidence} = 3", "column_id": "Confidence"}, "backgroundColor": "#d4edda"},
+				{"if": {"filter_query": "{Confidence} = 2", "column_id": "Confidence"}, "backgroundColor": "#fff3cd"},
+				{"if": {"filter_query": "{Confidence} = 1", "column_id": "Confidence"}, "backgroundColor": "#f8d7da"},
+				{"if": {"filter_query": "{Confidence} = 0", "column_id": "Confidence"}, "backgroundColor": "#d1ecf1"},
 			],
-			page_action="none"
+			style_cell_conditional=[
+				{"if": {"column_id": "Gene Symbol"}, "width": "100px", "minWidth": "100px"},
+				{"if": {"column_id": "OMIM ID"}, "width": "150px", "minWidth": "150px"},
+				{"if": {"column_id": "HGNC ID"}, "width": "110px", "minWidth": "110px"},
+				{"if": {"column_id": "Type"}, "width": "70px", "minWidth": "70px"},
+				{"if": {"column_id": "Biotype"}, "width": "110px", "minWidth": "110px"},
+				{"if": {"column_id": "Mode of Inheritance"}, "width": "180px", "minWidth": "180px"},
+				{"if": {"column_id": "Confidence"}, "width": "80px", "minWidth": "80px"},
+			],
+			page_action="none",
+			markdown_options={"link_target": "_blank"}
 		)
 		for level in confidence_levels_present
 	}
 
+	# Handle manual genes table
 	if manual_genes_list:
+		manual_table_data = []
+		for gene in manual_genes_list:
+			manual_table_data.append({
+				"Gene Symbol": gene,
+				"OMIM ID": "",
+				"HGNC ID": "",
+				"Type": "manual",
+				"Biotype": "manual",
+				"Mode of Inheritance": "manual",
+				"Confidence": 0
+			})
+		
 		tables_by_level["Manual"] = dash_table.DataTable(
-			columns=[{"name": col, "id": col} for col in ["Gene symbol", "Confidence level"]],
-			data=[{"Gene symbol": gene, "Confidence level": 0} for gene in manual_genes_list],
+			columns=table_columns,
+			data=manual_table_data,
 			style_table={"overflowX": "auto", "maxHeight": "400px", "overflowY": "auto"},
-			style_cell={"textAlign": "left", "padding": "4px"},
-			style_header={"fontWeight": "bold"},
-			style_data_conditional=[{"if": {"filter_query": "{Confidence level} = 0", "column_id": "Confidence level"}, "backgroundColor": "#d1ecf1"}],
-			page_action="none"
+			style_cell={
+				"textAlign": "left", 
+				"padding": "6px",
+				"fontSize": "11px",
+				"fontFamily": "Arial, sans-serif",
+				"whiteSpace": "normal",
+				"height": "auto"
+			},
+			style_header={
+				"fontWeight": "bold",
+				"backgroundColor": "#f8f9fa",
+				"border": "1px solid #ddd",
+				"fontSize": "12px"
+			},
+			style_data_conditional=[
+				{"if": {"filter_query": "{Confidence} = 0", "column_id": "Confidence"}, "backgroundColor": "#d1ecf1"}
+			],
+			style_cell_conditional=[
+				{"if": {"column_id": "Gene Symbol"}, "width": "100px", "minWidth": "100px"},
+				{"if": {"column_id": "OMIM ID"}, "width": "150px", "minWidth": "150px"},
+				{"if": {"column_id": "HGNC ID"}, "width": "110px", "minWidth": "110px"},
+				{"if": {"column_id": "Type"}, "width": "70px", "minWidth": "70px"},
+				{"if": {"column_id": "Biotype"}, "width": "110px", "minWidth": "110px"},
+				{"if": {"column_id": "Mode of Inheritance"}, "width": "180px", "minWidth": "180px"},
+				{"if": {"column_id": "Confidence"}, "width": "80px", "minWidth": "80px"},
+			],
+			page_action="none",
+			markdown_options={"link_target": "_blank"}
 		)
 
 	table_output = html.Div(id="table-per-confidence")
 
+	# SIMPLIFIED summary layout with search bar moved below the summary table (basic functionality only)
 	summary_layout = html.Div([
+		# Summary table first
+		html.Div(summary_table, id="summary-table-content", style={"marginBottom": "20px"}),
+		
+		# Simple search bar below the summary table
 		dbc.Row([
 			dbc.Col([
 				dbc.InputGroup([
@@ -1582,44 +1777,29 @@ def display_panel_genes(n_clicks, selected_uk_ids, selected_au_ids, selected_int
 			dbc.Col([
 				html.Div(id="gene-check-result", className="mt-2", style={"fontStyle": "italic"})
 			], width=6)
-		]),
-		html.Div(summary_table, id="summary-table-content", style={"marginTop": "20px"})
+		], style={"marginTop": "10px"})
 	])
 
 	return (summary_layout, 
 			html.Div([
 				html.Div(buttons, className="mb-3", style={"textAlign": "center"}),
-				table_output,
-				dcc.Store(id="gene-data-store", data=tables_by_level)
+				table_output
 			]), 
 			venn_component, 
 			hpo_table_component,  
 			venn_hpo_style,       
 			html.Div(), 
 			pie_style, 
-			df_unique["Gene symbol"].tolist(),
+			df_unique["Gene Symbol"].tolist(),
 			all_hpo_terms,       
 			updated_hpo_options,
 			"",  # Clear unique code
-			"")  # Clear panel summary
+			"",  # Clear panel summary
+			tables_by_level)
 
 # =============================================================================
-# CALLBACKS - TABLE INTERACTION
+# CALLBACKS - SIMPLIFIED GENE SEARCH (BASIC FUNCTIONALITY ONLY)
 # =============================================================================
-
-@app.callback(
-	Output("table-per-confidence", "children"),
-	Input({"type": "btn-confidence", "level": ALL}, "n_clicks"),
-	State("gene-data-store", "data")
-)
-def update_table_by_confidence(btn_clicks, data):
-	ctx = dash.callback_context
-	if not ctx.triggered:
-		return ""
-	triggered = ctx.triggered[0]["prop_id"].split(".")[0]
-	triggered_dict = json.loads(triggered)
-	level = triggered_dict["level"]
-	return data.get(level, "")
 
 @app.callback(
 	Output("gene-check-result", "children"),
@@ -1627,15 +1807,42 @@ def update_table_by_confidence(btn_clicks, data):
 	Input("gene-check-btn", "n_clicks"),
 	Input("gene-check-input", "n_submit"),
 	State("gene-check-input", "value"),
-	State("gene-list-store", "data")
+	State("gene-list-store", "data"),
+	prevent_initial_call=True
 )
 def check_gene_in_panel(n_clicks, n_submit, gene_name, gene_list):
 	if not gene_name or not gene_list:
 		return "", ""
+	
 	if gene_name.upper() in [g.upper() for g in gene_list]:
 		return f"✅ Gene '{gene_name}' is present in the custom panel.", ""
 	else:
 		return f"❌ Gene '{gene_name}' is NOT present in the custom panel.", ""
+
+# =============================================================================
+# CALLBACKS - SIMPLE TABLE INTERACTION
+# =============================================================================
+
+@app.callback(
+	Output("table-per-confidence", "children"),
+	Input({"type": "btn-confidence", "level": ALL}, "n_clicks"),
+	State("gene-data-store", "data"),
+	prevent_initial_call=True
+)
+def update_table_by_confidence(btn_clicks, data):
+	ctx = dash.callback_context
+	if not ctx.triggered:
+		return ""
+	
+	# Check if any button was actually clicked (not just initialized)
+	if all(n == 0 for n in btn_clicks):
+		return ""
+	
+	triggered = ctx.triggered[0]["prop_id"].split(".")[0]
+	triggered_dict = json.loads(triggered)
+	level = triggered_dict["level"]
+	
+	return data.get(level, "")
 
 # =============================================================================
 # CLIENTSIDE CALLBACK - AUTO COPY TO CLIPBOARD WITH NOTIFICATION
