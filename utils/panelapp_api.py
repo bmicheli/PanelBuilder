@@ -23,7 +23,7 @@ def fetch_panels(base_url):
     return pd.DataFrame(panels)
 
 def fetch_panel_genes(base_url, panel_id):
-    """Fetch gene list for a specific panel ID"""
+    """Fetch gene list for a specific panel ID with detailed gene information"""
     url = f"{base_url}panels/{panel_id}/"
     response = requests.get(url)
     if response.status_code != 200:
@@ -32,11 +32,34 @@ def fetch_panel_genes(base_url, panel_id):
     panel_data = response.json()
     genes = panel_data.get("genes", [])
     
+    def format_omim_links(omim_list):
+        """Format OMIM IDs as clickable links"""
+        if not omim_list:
+            return ""
+        
+        links = []
+        for omim_id in omim_list:
+            if omim_id:
+                links.append(f'[{omim_id}](https://omim.org/entry/{omim_id})')
+        
+        return " | ".join(links) if links else ""
+    
+    def format_hgnc_link(hgnc_id):
+        """Format HGNC ID as clickable link"""
+        if not hgnc_id:
+            return ""
+        
+        return f'[{hgnc_id}](https://www.genenames.org/data/gene-symbol-report/#!/hgnc_id/{hgnc_id})'
+    
     df_genes = pd.DataFrame([
         {
-            "gene_symbol": g["gene_data"].get("gene_symbol"),
+            "gene_symbol": g["gene_data"].get("gene_symbol", ""),
+            "omim_id": format_omim_links(g["gene_data"].get("omim_gene", [])),
+            "hgnc_id": format_hgnc_link(g["gene_data"].get("hgnc_id", "")),
+            "entity_type": g.get("entity_type", ""),
+            "biotype": g["gene_data"].get("biotype", ""),
+            "mode_of_inheritance": g.get("mode_of_inheritance", ""),
             "confidence_level": g.get("confidence_level"),
-            "mode_of_inheritance": g.get("mode_of_inheritance"),
             "penetrance": g.get("penetrance"),
             "source": g.get("source"),
         }
