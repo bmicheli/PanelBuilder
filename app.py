@@ -1248,8 +1248,9 @@ def toggle_sidebar(n_clicks, is_open):
         return not is_open
     return is_open
 
-# Handle preset selection
+# Handle preset selection with complete reset functionality
 @app.callback(
+    # Input controls (existing)
     Output("dropdown-uk", "value", allow_duplicate=True),
     Output("dropdown-au", "value", allow_duplicate=True),
     Output("dropdown-internal", "value", allow_duplicate=True),
@@ -1258,6 +1259,24 @@ def toggle_sidebar(n_clicks, is_open):
     Output("hpo-search-dropdown", "value", allow_duplicate=True),
     Output("hpo-search-dropdown", "options", allow_duplicate=True),
     Output("sidebar-offcanvas", "is_open", allow_duplicate=True),
+    
+    # Output displays (to reset them)
+    Output("summary-table-output", "children", allow_duplicate=True),
+    Output("gene-table-output", "children", allow_duplicate=True),
+    Output("venn-container", "children", allow_duplicate=True),
+    Output("hpo-terms-table-container", "children", allow_duplicate=True),
+    Output("venn-hpo-row", "style", allow_duplicate=True),
+    Output("pie-chart-container", "children", allow_duplicate=True),
+    Output("pie-chart-container", "style", allow_duplicate=True),
+    Output("gene-list-store", "data", allow_duplicate=True),
+    Output("generated-code-output", "value", allow_duplicate=True),
+    Output("panel-summary-output", "value", allow_duplicate=True),
+    Output("gene-data-store", "data", allow_duplicate=True),
+    Output("generate-code-section", "style", allow_duplicate=True),
+    Output("hr-venn", "style", allow_duplicate=True),
+    Output("hr-summary", "style", allow_duplicate=True),
+    Output("hr-table", "style", allow_duplicate=True),
+    
     Input({"type": "preset-btn", "index": ALL}, "n_clicks"),
     State("hpo-search-dropdown", "options"),
     prevent_initial_call=True
@@ -1296,8 +1315,41 @@ def apply_preset(n_clicks_list, current_hpo_options):
             }
             updated_hpo_options.append(option)
     
-    # Return all values AND close sidebar (False)
-    return uk_panels, au_panels, internal_panels, conf_levels, manual_genes_text, hpo_terms, updated_hpo_options, False
+    # Reset all output displays to initial empty/hidden state
+    empty_summary = ""
+    empty_gene_table = ""
+    empty_venn = ""
+    empty_hpo_table = ""
+    hidden_style = {"display": "none"}
+    empty_pie = ""
+    empty_gene_list = []
+    empty_code = ""
+    empty_panel_summary = ""
+    empty_gene_data = {}
+    
+    # Return all values: input controls + reset outputs + close sidebar (False)
+    return (
+        # Input controls
+        uk_panels, au_panels, internal_panels, conf_levels, manual_genes_text, 
+        hpo_terms, updated_hpo_options, False,
+        
+        # Reset outputs
+        empty_summary,           # summary-table-output
+        empty_gene_table,        # gene-table-output
+        empty_venn,              # venn-container
+        empty_hpo_table,         # hpo-terms-table-container
+        hidden_style,            # venn-hpo-row
+        empty_pie,               # pie-chart-container
+        hidden_style,            # pie-chart-container style
+        empty_gene_list,         # gene-list-store
+        empty_code,              # generated-code-output
+        empty_panel_summary,     # panel-summary-output
+        empty_gene_data,         # gene-data-store
+        hidden_style,            # generate-code-section
+        hidden_style,            # hr-venn
+        hidden_style,            # hr-summary
+        hidden_style             # hr-table
+    )
 
 # =============================================================================
 # CALLBACKS - CODE GENERATION
