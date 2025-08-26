@@ -44,30 +44,30 @@ PANEL_PRESETS = {
     "epilepsy": {
         "name": "Epilepsy",
         "icon": "mdi:brain",
-        "uk_panels": [402], 
-        "au_panels": [202],
+        "uk_panels": [], 
+        "au_panels": [],
         "internal": [],
-        "conf": [3,2],
+        "conf": [],
         "manual": [],
-        "hpo_terms": ["HP:0200134","HP:0002353","HP:0001250"] 
+        "hpo_terms": [] 
     },
     "cardiac": {
         "name": "Cardiac Conditions",
         "icon": "mdi:heart",
-        "uk_panels": [749],
-        "au_panels": [253],
+        "uk_panels": [],
+        "au_panels": [],
         "internal": [],
-        "conf": [3,2],
+        "conf": [],
         "manual": [],
-        "hpo_terms": ["HP:0001638","HP:0001637"]  
+        "hpo_terms": []  
     },
     "cancer_predisposition": {
         "name": "Colorectal Cancer Predisposition",
         "icon": "mdi:dna",
-        "uk_panels": [244],
-        "au_panels": [4371],
+        "uk_panels": [],
+        "au_panels": [],
         "internal": [],
-        "conf": [3,2],
+        "conf": [],
         "manual": [],
         "hpo_terms": []
     },
@@ -502,7 +502,8 @@ def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_lis
                 panel_info = panel_row.iloc[0]
                 panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
                 version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
-                summary_parts.append(f"PanelApp_UK/{panel_name}{version}{confidence_suffix}")
+                # Ajout de l'ID dans le summary
+                summary_parts.append(f"PanelApp_UK({panel_id})/{panel_name}{version}{confidence_suffix}")
     
     # Process AU panels
     if au_ids:
@@ -512,7 +513,8 @@ def generate_panel_summary(uk_ids, au_ids, internal_ids, confs, manual_genes_lis
                 panel_info = panel_row.iloc[0]
                 panel_name = panel_info['name'].replace(' ', '_').replace('/', '_').replace(',', '_')
                 version = f"_v{panel_info['version']}" if pd.notna(panel_info.get('version')) else ""
-                summary_parts.append(f"PanelApp_AUS/{panel_name}{version}{confidence_suffix}")
+                # Ajout de l'ID dans le summary
+                summary_parts.append(f"PanelApp_AUS({panel_id})/{panel_name}{version}{confidence_suffix}")
     
     # Process Internal panels
     if internal_ids:
@@ -937,6 +939,9 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_
 # =============================================================================
 
 app.layout = dbc.Container([
+    # Download component for gene export
+    dcc.Download(id="download-genes"),
+    
     # Sidebar
     create_sidebar(),
     
@@ -949,8 +954,8 @@ app.layout = dbc.Container([
             className="me-2",
             style={"position": "absolute", "top": "20px", "right": "20px"}
         ),
-        html.H1("🧬Panel Builder"),
-#        html.Small("⚡ Optimized for Performance", className="text-muted", style={"fontSize": "12px"})
+        html.H1("Panel Builder"),
+#        html.Small("Optimized for Performance", className="text-muted", style={"fontSize": "12px"})
     ], style={"position": "relative"}),
     
     html.Div(html.Hr(), id="hr-hidden", style={"display": "none"}),
@@ -976,7 +981,7 @@ app.layout = dbc.Container([
                 style={"width": "100%", "marginBottom": "5px"}
             ),
             html.Div([
-                html.Small("ℹ️ HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
+                html.Small("HPO terms are auto-generated from Australia panels only (takes a few seconds)", 
                         className="text-muted", style={"fontSize": "11px"}),
                 dcc.Loading(
                     id="hpo-loading",
@@ -1070,8 +1075,10 @@ app.layout = dbc.Container([
         id="generate-code-section",
         style={"display": "none", "width": "100%"},
         children=[
-            html.Div(dbc.Button("Generate Code", id="generate-code-btn", color="primary"), 
-                    style={"textAlign": "center", "marginBottom": "10px"}),
+            html.Div([
+                dbc.Button("Generate Code", id="generate-code-btn", color="primary", className="me-2"),
+                dbc.Button("Export Genes", id="export-genes-btn", color="success")
+            ], style={"textAlign": "center", "marginBottom": "10px"}),
             html.Div([
                 html.Label("Import Code:", style={"fontWeight": "bold", "marginBottom": "5px"}),
                 dcc.Textarea(id="generated-code-output", 
@@ -1392,6 +1399,47 @@ def generate_unique_code_and_summary(n_clicks, uk_ids, au_ids, internal_ids, con
     )
     
     return encoded, summary
+
+# =============================================================================
+# CALLBACKS - GENE EXPORT
+# =============================================================================
+
+@app.callback(
+    Output("download-genes", "data"),
+    Input("export-genes-btn", "n_clicks"),
+    State("gene-list-store", "data"),
+    State("dropdown-uk", "value"),
+    State("dropdown-au", "value"),
+    State("dropdown-internal", "value"),
+    State("manual-genes", "value"),
+    prevent_initial_call=True
+)
+def export_gene_list(n_clicks, gene_list, uk_ids, au_ids, internal_ids, manual_genes):
+    if n_clicks and gene_list:
+        # Generate filename based on current timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        
+        # Create a simple descriptive filename
+        panel_parts = []
+        if uk_ids:
+            panel_parts.append(f"UK{len(uk_ids)}")
+        if au_ids:
+            panel_parts.append(f"AU{len(au_ids)}")
+        if internal_ids:
+            panel_parts.append(f"INT{len(internal_ids)}")
+        if manual_genes and manual_genes.strip():
+            manual_count = len([g.strip() for g in manual_genes.strip().splitlines() if g.strip()])
+            panel_parts.append(f"MAN{manual_count}")
+        
+        panel_desc = "_".join(panel_parts) if panel_parts else "Panel"
+        filename = f"CustomPanel_{len(gene_list)}genes_{timestamp}.txt"
+        
+        # Create file content: one gene per line
+        content = "\n".join(sorted(gene_list))
+        
+        return dcc.send_string(content, filename)
+    
+    raise dash.exceptions.PreventUpdate
 
 # =============================================================================
 # CALLBACKS - RESET AND IMPORT
@@ -1957,9 +2005,9 @@ def check_gene_in_panel(n_clicks, n_submit, gene_name, gene_list):
         return "", ""
     
     if gene_name.upper() in [g.upper() for g in gene_list]:
-        return f"✅ Gene '{gene_name}' is present in the custom panel.", ""
+        return f"Gene '{gene_name}' is present in the custom panel.", ""
     else:
-        return f"❌ Gene '{gene_name}' is NOT present in the custom panel.", ""
+        return f"Gene '{gene_name}' is NOT present in the custom panel.", ""
 
 # =============================================================================
 # CALLBACKS - SIMPLE TABLE INTERACTION
