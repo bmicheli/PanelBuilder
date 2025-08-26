@@ -12,15 +12,21 @@ def fetch_panels(base_url):
     panels = []
     url = f"{base_url}panels/"
     
-    while url:
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise Exception(f"Failed to fetch panels from {url}")
-        data = response.json()
-        panels.extend(data.get('results', []))
-        url = data.get('next')  # For pagination
+    try:
+        while url:
+            response = requests.get(url, timeout=10)
+            if response.status_code != 200:
+                print(f"❌ Failed to fetch panels from {url}, status: {response.status_code}")
+                return pd.DataFrame(columns=["id", "name"])
+            data = response.json()
+            panels.extend(data.get('results', []))
+            url = data.get('next')  # For pagination
+    except Exception as e:
+        print(f"❌ Exception while fetching panels: {e}")
+        return pd.DataFrame(columns=["id", "name"])
     
     return pd.DataFrame(panels)
+
 
 def fetch_panel_genes(base_url, panel_id):
     """Fetch gene list for a specific panel ID with detailed gene information"""
