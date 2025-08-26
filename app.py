@@ -17,10 +17,12 @@ import json
 import requests
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 import numpy as np
+import threading
+import schedule
 from utils.panelapp_api import (
     fetch_panels,
     fetch_panel_genes,
@@ -34,7 +36,16 @@ from utils.panelapp_api import (
 
 import concurrent.futures
 from functools import lru_cache
-import threading
+
+# =============================================================================
+# GLOBAL VARIABLES FOR PANEL DATA
+# =============================================================================
+
+panels_uk_df = None
+panels_au_df = None
+internal_df = None
+internal_panels = None
+last_refresh = None
 
 # =============================================================================
 # PANEL PRESETS CONFIGURATION
@@ -82,6 +93,66 @@ PANEL_PRESETS = {
         "hpo_terms": ["HP:0012758", "HP:0001249"] 
     }
 }
+
+# =============================================================================
+# PANEL REFRESH FUNCTIONS
+# =============================================================================
+
+def refresh_panels():
+    """Rafraîchir les données des panels"""
+    global panels_uk_df, panels_au_df, internal_df, internal_panels, last_refresh
+    
+    try:
+        print(f"🔄 Refreshing panels at {datetime.now()}")
+        
+        # Clear existing cache
+        fetch_panel_genes_cached.cache_clear()
+        fetch_hpo_term_details_cached.cache_clear()
+        fetch_panel_disorders_cached.cache_clear()
+        
+        # Reload panels
+        print("Fetching UK panels...")
+        panels_uk_df = fetch_panels(PANELAPP_UK_BASE)
+        print(f"✅ Loaded {len(panels_uk_df)} UK panels")
+        
+        print("Fetching AU panels...")
+        panels_au_df = fetch_panels(PANELAPP_AU_BASE)
+        print(f"✅ Loaded {len(panels_au_df)} AU panels")
+        
+        print("Loading internal panels...")
+        internal_df, internal_panels = load_internal_panels_from_files()
+        print(f"✅ Loaded {len(internal_panels)} internal panels")
+        
+        last_refresh = datetime.now()
+        print(f"✅ Panels refresh completed at {last_refresh}")
+        
+    except Exception as e:
+        print(f"❌ Error refreshing panels: {e}")
+
+def schedule_panel_refresh():
+    """Planifier le rafraîchissement périodique"""
+    # Rafraîchir tous les jours à 6h du matin
+    schedule.every().monday.at("06:00").do(refresh_panels)
+    
+    def run_scheduler():
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Vérifier toutes les minutes
+    
+    # Lancer le scheduler dans un thread séparé
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    print("📅 Panel refresh scheduler started")
+
+def initialize_panels():
+    """Initialisation des panels au démarrage"""
+    print("Initializing PanelBuilder...")
+    start_time = time.time()
+    
+    refresh_panels()  # Premier chargement
+    schedule_panel_refresh()  # Démarrer le scheduler
+    
+    print(f"Initialization completed in {time.time() - start_time:.2f} seconds")
 
 # =============================================================================
 # PERFORMANCE OPTIMIZATIONS - CACHING
@@ -906,33 +977,16 @@ def create_sidebar():
     )
 
 # =============================================================================
-# DATA INITIALIZATION
-# =============================================================================
-
-print("Initializing PanelBuilder...")
-start_time = time.time()
-
-# Fetch panel data
-print("Fetching UK panels...")
-panels_uk_df = fetch_panels(PANELAPP_UK_BASE)
-print(f"Loaded {len(panels_uk_df)} UK panels")
-
-print("Fetching AU panels...")
-panels_au_df = fetch_panels(PANELAPP_AU_BASE)
-print(f"Loaded {len(panels_au_df)} AU panels")
-
-# Load internal panels from .txt files
-print("Loading internal panels...")
-internal_df, internal_panels = load_internal_panels_from_files()
-print(f"Loaded {len(internal_panels)} internal panels with {len(internal_df)} genes")
-
-print(f"Initialization completed in {time.time() - start_time:.2f} seconds")
-
-# =============================================================================
 # DASH APP INITIALIZATION
 # =============================================================================
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+
+# =============================================================================
+# DATA INITIALIZATION WITH SCHEDULED REFRESH
+# =============================================================================
+
+initialize_panels()
 
 # =============================================================================
 # APP LAYOUT
