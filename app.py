@@ -52,36 +52,6 @@ last_refresh = None
 # =============================================================================
 
 PANEL_PRESETS = {
-    "epilepsy": {
-        "name": "Epilepsy",
-        "icon": "mdi:brain",
-        "uk_panels": [], 
-        "au_panels": [],
-        "internal": [],
-        "conf": [],
-        "manual": [],
-        "hpo_terms": [] 
-    },
-    "cardiac": {
-        "name": "Cardiac Conditions",
-        "icon": "mdi:heart",
-        "uk_panels": [],
-        "au_panels": [],
-        "internal": [],
-        "conf": [],
-        "manual": [],
-        "hpo_terms": []  
-    },
-    "cancer_predisposition": {
-        "name": "Colorectal Cancer Predisposition",
-        "icon": "mdi:dna",
-        "uk_panels": [],
-        "au_panels": [],
-        "internal": [],
-        "conf": [],
-        "manual": [],
-        "hpo_terms": []
-    },
     "neurodevelopmental": {
         "name": "Neurodevelopmental Disorders",
         "icon": "mdi:head-cog",
@@ -90,7 +60,7 @@ PANEL_PRESETS = {
         "internal": [8801],
         "conf": [3],
         "manual": [],
-        "hpo_terms": ["HP:0012758", "HP:0001249"] 
+        "hpo_terms": [] 
     }
 }
 
@@ -2159,3 +2129,4 @@ app.clientside_callback(
 if __name__ == '__main__':
 	port = int(os.environ.get("PORT", 8050))
 	app.run(host="0.0.0.0", port=port)
+
