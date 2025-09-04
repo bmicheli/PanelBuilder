@@ -2106,10 +2106,10 @@ app.clientside_callback(
 			notification.style.fontWeight = 'bold';
 			notification.style.fontSize = '14px';
 			
-			// Clear the notification after 3 seconds
+			// Clear the notification after 6 seconds
 			setTimeout(function() {
 				notification.textContent = '';
-			}, 3000);
+			}, 6000);
 		}
 	}
 	""",
@@ -2127,3 +2127,4 @@ app.clientside_callback(
 if __name__ == '__main__':
 	port = int(os.environ.get("PORT", 8050))
 	app.run(host="0.0.0.0", port=port)
+
